@@ -1,0 +1,31 @@
+# mozaproxy - hide the real MOZA base from game input enumeration.
+#
+# The mozaproxy daemon opens the real base directly by path (and grabs it), then
+# re-exposes a clean virtual wheel that games use instead. To stop games (SDL /
+# Wine winebus under Proton) from *also* enumerating the real 128-button node and
+# crashing on it, we clear its ID_INPUT_JOYSTICK tag. The daemon does not rely on
+# udev tags, so it still opens the device fine.
+#
+# Access: MODE/GROUP plus the uaccess tag keep the node readable/writable by the
+# logged-in user (and thus the daemon). uaccess was already applied by earlier
+# seat rules based on the original joystick tag, so the daemon keeps access even
+# though games now skip the device.
+#
+# Match is scoped to the real USB device (vendor 346e, product 0000). The virtual
+# uinput device has no USB ATTRS parent and a different product id, so it is never
+# matched here and keeps its joystick tag.
+
+ACTION=="remove", GOTO="mozaproxy_end"
+
+# Real MOZA base event node: strip the joystick tag so games ignore it, but keep
+# it accessible to the daemon.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0000", \
+  ENV{ID_INPUT_JOYSTICK}="", TAG+="uaccess", GROUP="input", MODE="0660"
+
+# Real MOZA base legacy joystick (jsN) node: block it entirely. The daemon uses
+# the event interface, and modern Proton uses evdev; this prevents any legacy
+# js-based enumeration of the real device. The virtual device gets its own jsN.
+SUBSYSTEM=="input", KERNEL=="js*", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0000", \
+  ENV{ID_INPUT_JOYSTICK}="", MODE="0000"
+
+LABEL="mozaproxy_end"

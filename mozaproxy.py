@@ -76,6 +76,39 @@ def clone_effect(src: ff.Effect) -> ff.Effect:
     return dst
 
 
+def describe_effect(e: ff.Effect) -> str:
+    """Human-readable one-liner for an ff.Effect, for FFB tracing.
+
+    Best-effort only: must NEVER raise, since it runs inside the relay loop.
+    (ff.Effect fields are: type, id, direction, ff_trigger, ff_replay, u.)
+    """
+    try:
+        ftype = ecodes.FF.get(e.type, e.type)
+        parts = [f"type={ftype}", f"id={e.id}", f"dir=0x{e.direction & 0xffff:04x}"]
+        try:
+            parts.append(f"len={e.ff_replay.length}ms delay={e.ff_replay.delay}ms")
+        except Exception:
+            pass
+        try:
+            if e.type == ecodes.FF_CONSTANT:
+                parts.append(f"level={e.u.constant.level}")
+            elif e.type == ecodes.FF_PERIODIC:
+                p = e.u.periodic
+                parts.append(f"mag={p.magnitude} period={p.period} offset={p.offset}")
+            elif e.type in (ecodes.FF_SPRING, ecodes.FF_DAMPER, ecodes.FF_FRICTION,
+                            ecodes.FF_INERTIA):
+                c = e.u.condition[0]
+                parts.append(f"satL={c.left_saturation} satR={c.right_saturation} "
+                             f"coefL={c.left_coeff} coefR={c.right_coeff} center={c.center}")
+            elif e.type == ecodes.FF_RAMP:
+                parts.append(f"start={e.u.ramp.start_level} end={e.u.ramp.end_level}")
+        except Exception:
+            pass
+        return " ".join(parts)
+    except Exception:
+        return "<effect>"
+
+
 class Proxy:
     def __init__(self, args):
         self.args = args
@@ -182,36 +215,49 @@ class Proxy:
 
     def _handle_upload(self, request_id: int) -> None:
         upload = self.virt.begin_upload(request_id)
-        effect = upload.effect
-        vid = effect.id
+        # end_upload MUST always run, or the uinput FF request is left dangling
+        # and every subsequent upload fails. Nothing between here and the finally
+        # is allowed to abort that.
         try:
-            real_effect = clone_effect(effect)
-            # Re-use the previously mapped real id if the game is updating an
-            # existing effect, otherwise ask the kernel for a fresh one.
-            real_effect.id = self.effect_map.get(vid, -1)
-            real_id = self.real.upload_effect(real_effect)
-            self.effect_map[vid] = real_id
-            upload.retval = 0
-        except OSError as exc:
-            log.warning("ff upload relay failed (vid=%d): %s", vid, exc)
-            upload.retval = -(exc.errno or errno.EINVAL)
-        self.virt.end_upload(upload)
+            effect = upload.effect
+            vid = effect.id
+            try:
+                real_effect = clone_effect(effect)
+                # Re-use the previously mapped real id if the game is updating an
+                # existing effect, otherwise ask the kernel for a fresh one.
+                real_effect.id = self.effect_map.get(vid, -1)
+                real_id = self.real.upload_effect(real_effect)
+                self.effect_map[vid] = real_id
+                upload.retval = 0
+                if log.isEnabledFor(logging.DEBUG):
+                    log.debug("FF upload vid=%d->rid=%d  %s",
+                              vid, real_id, describe_effect(effect))
+            except OSError as exc:
+                log.warning("ff upload relay failed (vid=%d): %s", vid, exc)
+                upload.retval = -(exc.errno or errno.EINVAL)
+        finally:
+            self.virt.end_upload(upload)
 
     def _handle_erase(self, request_id: int) -> None:
         erase = self.virt.begin_erase(request_id)
-        vid = erase.effect_id
-        real_id = self.effect_map.pop(vid, None)
-        if real_id is not None:
-            try:
-                self.real.erase_effect(real_id)
-            except OSError as exc:
-                log.debug("ff erase relay failed (vid=%d): %s", vid, exc)
-        erase.retval = 0
-        self.virt.end_erase(erase)
+        try:
+            vid = erase.effect_id
+            real_id = self.effect_map.pop(vid, None)
+            log.debug("FF erase vid=%d->rid=%s", vid, real_id)
+            if real_id is not None:
+                try:
+                    self.real.erase_effect(real_id)
+                except OSError as exc:
+                    log.debug("ff erase relay failed (vid=%d): %s", vid, exc)
+            erase.retval = 0
+        finally:
+            self.virt.end_erase(erase)
 
     def _handle_ff_write(self, code: int, value: int) -> None:
         if code in FF_CONTROL_CODES:
             # Global gain / autocenter apply directly.
+            name = ecodes.FF.get(code, code)
+            log.debug("FF control %s=%d", name, value)
             try:
                 self.real.write(ecodes.EV_FF, code, value)
             except OSError as exc:
@@ -219,7 +265,11 @@ class Proxy:
             return
         real_id = self.effect_map.get(code)
         if real_id is None:
+            log.debug("FF %s vid=%d (UNMAPPED - dropped)",
+                      "play" if value else "stop", code)
             return
+        log.debug("FF %s vid=%d->rid=%d value=%d",
+                  "play" if value else "stop", code, real_id, value)
         try:
             self.real.write(ecodes.EV_FF, real_id, value)
         except OSError as exc:

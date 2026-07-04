@@ -41,6 +41,10 @@ from evdev import AbsInfo, InputDevice, UInput, ecodes, ff
 
 log = logging.getLogger("mozaproxy")
 
+
+class SingletonError(Exception):
+    """Raised when the base is already grabbed by another mozaproxy instance."""
+
 DEFAULT_VENDOR = 0x346E   # keep MOZA vendor id so sims still brand-detect it
 DEFAULT_PRODUCT = 0x0002  # distinct product so our udev rule never matches us
 DEFAULT_NAME = "MOZA R25 (mozaproxy)"
@@ -127,7 +131,14 @@ class Proxy:
         try:
             dev.grab()
         except OSError as exc:
-            log.warning("could not grab %s (%s); continuing ungrabbed", dev.path, exc)
+            # An exclusive grab is mandatory: if it fails, another mozaproxy
+            # instance already owns the base. Running ungrabbed would create a
+            # duplicate, non-relaying virtual wheel that games may bind to
+            # instead of the real one. Refuse to start a second copy.
+            log.error("could not grab %s (%s) - another instance already running? "
+                      "Refusing to start a duplicate.", dev.path, exc)
+            dev.close()
+            raise SingletonError(str(exc))
         self.real = dev
         log.info("attached to real device: %s (%s)", dev.name, dev.path)
         return True
@@ -330,6 +341,9 @@ def supervise(args) -> int:
         except KeyboardInterrupt:
             proxy.close()
             break
+        except SingletonError:
+            proxy.close()
+            return 3
         except Exception:
             log.exception("proxy error; restarting")
         finally:

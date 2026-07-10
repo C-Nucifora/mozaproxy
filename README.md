@@ -96,13 +96,38 @@ PROTON_DLSS_UPGRADE=1 ENABLE_HDR_WSI=1 PROTON_ENABLE_WAYLAND=1 PROTON_ENABLE_HDR
 
 In the game, bind to the **"MOZA R25 (mozaproxy)"** device.
 
+## Modes (per-game faces)
+
+The same wheel can wear different faces so whatever input backend a game uses
+digests it correctly. Pick one with `--mode` (`mozactl modes` lists them):
+
+| Mode | Selector | Presents as | Use when |
+|------|----------|-------------|----------|
+| **A** | `A` / `wheel` | Passthrough wheel (default) | Sim titles; fixes the FH5 enumeration crash |
+| **C** | `C` / `normalized` | Wheel with consistent **signed** axes | A game reads axes as **binary 0%/100%** — the base's steering is unsigned `0..65535` while pedals are signed, and C rescales everything to one convention |
+| **B** | `B` / `gamepad` | **Xbox 360 / XInput** pad (steering→stick, throttle→RT, brake→LT) | Controller-only / arcade titles, or when even C reads binary |
+
+**Triage a broken game: try `A`, then `C`, then `B`.**
+
+```bash
+mozactl start --mode C            # normalized wheel (binary-axis fix)
+mozactl start --mode C --deadzone 0.03
+mozactl start --mode B            # XInput gamepad
+```
+
+> Gamepad mode's throttle/brake/clutch source axes are best-guess defaults
+> (`throttle=ABS_Z`, `brake=ABS_RZ`) until calibration lands — if a pedal is on
+> the wrong trigger, that's the knob to adjust. A `mozactl calibrate` helper is
+> planned (Phase 3, see [`docs/SPEC.md`](docs/SPEC.md)).
+
 ## Usage / tuning
 
 Everyday use is via `mozactl`:
 
 ```bash
-mozactl start                 # start the virtual wheel (Mode A)
-mozactl start -- --buttons 32 # pass daemon flags through
+mozactl start                 # start the virtual wheel (Mode A, default)
+mozactl start --mode C        # start in a specific mode
+mozactl modes                 # list modes
 mozactl status                # health of the whole pipeline
 mozactl stop                  # hide the wheel again
 ```

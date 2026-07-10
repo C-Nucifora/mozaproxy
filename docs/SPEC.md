@@ -215,12 +215,16 @@ becomes its profile row. Document this triage in the README.
   headline result already designed for.
 - *Accept:* `mozactl status` green; FH5 boots + has FFB; AC still works.
 
-**Phase 2 — Normalized + Gamepad modes (the binary-axis fix).**
-- Implement axis-normalization stage (Mode C): consistent signed ranges,
-  deadzone/curve. Validate a binary-axis game now reads smooth analog.
-- Prototype Mode B (XInput/gamepad face); validate a controller-only title sees
-  proper steering/throttle/brake as stick+triggers.
-- *Accept:* the two currently-binary games work in C or B.
+**Phase 2 — Normalized + Gamepad modes (the binary-axis fix).** *Implemented; in-game validation pending.*
+- ✅ `modes/` package with a `Mode` contract (`build_spec`/`map_input`/
+  `translate_effect`) and pure axis math (`rescale`), unit-tested base-off.
+- ✅ Mode C (normalized): rescales every non-hat axis to consistent signed range,
+  optional steering deadzone. `mozaproxy.py`/`mozactl` gained `--mode`.
+- ✅ Mode B (gamepad): Xbox-360 face (vid/pid `045e:028e`), steering→stick,
+  throttle→RT, brake→LT, buttons→pad, rumble→periodic FFB translation. Pedal
+  source axes are calibratable defaults.
+- *Accept (pending hardware):* a currently-binary game reads smooth analog in C
+  or B. Needs the base on + the user to test in-game.
 
 **Phase 3 — Profiles + launcher UX.**
 - `mozactl run <profile> -- %command%`, profile DB, seeded profiles, Steam

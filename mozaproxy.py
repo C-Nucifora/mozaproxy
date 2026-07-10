@@ -39,6 +39,9 @@ import time
 import evdev
 from evdev import AbsInfo, InputDevice, UInput, ecodes, ff
 
+from modes import get_mode
+from modes.base import RealCaps
+
 log = logging.getLogger("mozaproxy")
 
 
@@ -116,11 +119,11 @@ def describe_effect(e: ff.Effect) -> str:
 class Proxy:
     def __init__(self, args):
         self.args = args
+        self.mode = args._mode           # active presentation mode (see modes/)
         self.real: InputDevice | None = None
         self.virt: UInput | None = None
         # virtual effect id -> real effect id
         self.effect_map: dict[int, int] = {}
-        self.button_codes: list[int] = []
         self.running = True
 
     # -- lifecycle ---------------------------------------------------------
@@ -145,36 +148,32 @@ class Proxy:
 
     def build_virtual(self) -> None:
         assert self.real is not None
-        caps = self.real.capabilities()
+        caps = self.real.capabilities(absinfo=True)
 
-        abs_caps = caps.get(ecodes.EV_ABS, [])
-        # Expose the first N buttons contiguously from BTN_JOYSTICK; the real
-        # base numbers its buttons from 0x120 upward, so this maps 1:1.
-        n = self.args.buttons
-        self.button_codes = [ecodes.BTN_JOYSTICK + i for i in range(n)]
-        ff_caps = caps.get(ecodes.EV_FF, [])
-
-        events = {
-            ecodes.EV_ABS: abs_caps,
-            ecodes.EV_KEY: self.button_codes,
-        }
-        if ff_caps:
-            events[ecodes.EV_FF] = ff_caps
-
-        max_effects = self.real.ff_effects_count or 16
+        # Hand the mode the real device's capabilities; it decides the virtual
+        # device's shape (axes, buttons, ids, FF advertisement).
+        real = RealCaps(
+            abs={code: info for code, info in caps.get(ecodes.EV_ABS, [])},
+            keys=list(caps.get(ecodes.EV_KEY, [])),
+            ff=list(caps.get(ecodes.EV_FF, [])),
+            ff_effects_count=self.real.ff_effects_count or 16,
+        )
+        spec = self.mode.build_spec(real)
         self.virt = UInput(
-            events,
-            name=self.args.name,
-            vendor=self.args.vendor,
-            product=self.args.product,
-            version=0x0111,
-            max_effects=max_effects,
+            spec.events,
+            name=spec.name,
+            vendor=spec.vendor,
+            product=spec.product,
+            version=spec.version,
+            max_effects=spec.max_effects,
         )
         log.info(
-            "created virtual device: %s (vendor=%04x product=%04x, %d axes, %d buttons, "
-            "%d ff effects, max_effects=%d)",
-            self.args.name, self.args.vendor, self.args.product,
-            len(abs_caps), len(self.button_codes), len(ff_caps), max_effects,
+            "mode %s (%s): created virtual device '%s' (vendor=%04x product=%04x, "
+            "%d axes, %d buttons, ff=%s, max_effects=%d)",
+            self.mode.key, self.mode.label, spec.name, spec.vendor, spec.product,
+            len(spec.events.get(ecodes.EV_ABS, [])),
+            len(spec.events.get(ecodes.EV_KEY, [])),
+            "yes" if spec.events.get(ecodes.EV_FF) else "no", spec.max_effects,
         )
 
     def close(self) -> None:
@@ -202,11 +201,11 @@ class Proxy:
         if virt is None:
             return
         t = ev.type
-        if t == ecodes.EV_ABS:
-            virt.write(t, ev.code, ev.value)
-        elif t == ecodes.EV_KEY:
-            if ev.code in self._button_set:
-                virt.write(t, ev.code, ev.value)
+        if t == ecodes.EV_ABS or t == ecodes.EV_KEY:
+            # The mode translates one real event into zero or more virtual ones
+            # (axis rescale/remap, button remap, or drop).
+            for et, code, val in self.mode.map_input(t, ev.code, ev.value):
+                virt.write(et, code, val)
         elif t == ecodes.EV_SYN:
             virt.write(t, ev.code, ev.value)
         # EV_MSC (scancodes) and anything else are intentionally dropped.
@@ -233,7 +232,14 @@ class Proxy:
             effect = upload.effect
             vid = effect.id
             try:
-                real_effect = clone_effect(effect)
+                # Let the mode rewrite the effect first (e.g. gamepad mode turns
+                # a game's rumble into a periodic effect the wheel understands).
+                translated = self.mode.translate_effect(effect)
+                if translated is None:
+                    log.debug("FF upload vid=%d dropped by mode %s", vid, self.mode.key)
+                    upload.retval = -errno.EINVAL
+                    return
+                real_effect = clone_effect(translated)
                 # Re-use the previously mapped real id if the game is updating an
                 # existing effect, otherwise ask the kernel for a fresh one.
                 real_effect.id = self.effect_map.get(vid, -1)
@@ -289,7 +295,6 @@ class Proxy:
     # -- main loop --------------------------------------------------------
     def run(self) -> None:
         sel = selectors.DefaultSelector()
-        self._button_set = set(self.button_codes)
         sel.register(self.real.fileno(), selectors.EVENT_READ, "real")
         sel.register(self.virt.fileno(), selectors.EVENT_READ, "virt")
         log.info("relay running")
@@ -357,13 +362,20 @@ def supervise(args) -> int:
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="MOZA -> clean virtual wheel proxy with FFB relay")
-    p.add_argument("--buttons", type=int, default=DEFAULT_BUTTONS,
-                   help=f"number of buttons to expose (default {DEFAULT_BUTTONS})")
-    p.add_argument("--name", default=DEFAULT_NAME, help="virtual device name")
-    p.add_argument("--vendor", type=lambda x: int(x, 0), default=DEFAULT_VENDOR,
-                   help="virtual device USB vendor id (default 0x346e)")
-    p.add_argument("--product", type=lambda x: int(x, 0), default=DEFAULT_PRODUCT,
-                   help="virtual device USB product id (default 0x0002)")
+    p.add_argument("--mode", default="A",
+                   help="presentation mode: A/wheel (passthrough), C/normalized "
+                        "(consistent signed axes; fixes binary-axis games), "
+                        "B/gamepad (Xbox 360 / XInput). Default A.")
+    p.add_argument("--deadzone", type=float, default=0.0,
+                   help="steering deadzone fraction 0..1 (mode C only, default 0)")
+    # The following override mode defaults; unset (None) means 'use mode default'.
+    p.add_argument("--buttons", type=int, default=None,
+                   help=f"buttons to expose for wheel modes (mode default {DEFAULT_BUTTONS})")
+    p.add_argument("--name", default=None, help="override virtual device name")
+    p.add_argument("--vendor", type=lambda x: int(x, 0), default=None,
+                   help="override virtual device USB vendor id")
+    p.add_argument("--product", type=lambda x: int(x, 0), default=None,
+                   help="override virtual device USB product id")
     p.add_argument("--vendor-real", type=lambda x: int(x, 0), default=0x346E,
                    help="real MOZA vendor id to match (default 0x346e)")
     p.add_argument("--product-real", type=lambda x: int(x, 0), default=0x0000,
@@ -382,6 +394,16 @@ def main(argv=None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    try:
+        args._mode = get_mode(
+            args.mode,
+            buttons=args.buttons, name=args.name,
+            vendor=args.vendor, product=args.product,
+            steer_deadzone=args.deadzone,
+        )
+    except ValueError as exc:
+        log.error("%s", exc)
+        return 2
     return supervise(args)
 
 

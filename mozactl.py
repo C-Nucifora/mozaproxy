@@ -268,8 +268,12 @@ def cmd_start(args) -> int:
         print(_c("31", "Base not on USB — power the wheelbase on first."))
         return 1
     py = VENV_PY if os.path.exists(VENV_PY) else sys.executable
-    proc = subprocess.Popen([py, DAEMON, *args.daemon_args],
-                            start_new_session=True)
+    cmd = [py, DAEMON, "--mode", args.mode]
+    if args.deadzone:
+        cmd += ["--deadzone", str(args.deadzone)]
+    cmd += args.daemon_args
+    print(f"Starting mode {args.mode.upper()} ...")
+    proc = subprocess.Popen(cmd, start_new_session=True)
     try:
         with open(PIDFILE, "w") as f:
             f.write(str(proc.pid))
@@ -284,6 +288,15 @@ def cmd_start(args) -> int:
               + f"{py} {DAEMON} -v")
         return 1
     print(f"Started (pid {proc.pid}); virtual node not seen yet — check: mozactl status")
+    return 0
+
+
+def cmd_modes(_args) -> int:
+    from modes import list_modes
+    print(_c("1", "presentation modes") + "  (mozactl start --mode <sel>)")
+    for sel, desc in list_modes():
+        print(f"  {_c('36', sel):>6}  {desc}")
+    print("\n  Triage a broken game: try A, then C, then B.")
     return 0
 
 
@@ -308,11 +321,17 @@ def main(argv=None) -> int:
     d = sub.add_parser("doctor", help="diagnose + fix setup")
     d.add_argument("--fix", action="store_true", help="apply safe fixes (udev reload/trigger)")
     d.set_defaults(fn=cmd_doctor)
-    s = sub.add_parser("start", help="start the daemon (Mode A)")
+    s = sub.add_parser("start", help="start the daemon in a chosen mode")
+    s.add_argument("--mode", default="A",
+                   help="A/wheel (default), C/normalized (binary-axis fix), "
+                        "B/gamepad (XInput). See 'mozactl modes'.")
+    s.add_argument("--deadzone", type=float, default=0.0,
+                   help="steering deadzone 0..1 (mode C)")
     s.add_argument("daemon_args", nargs=argparse.REMAINDER,
-                   help="extra args passed to mozaproxy.py (e.g. --buttons 32)")
+                   help="extra args passed through to mozaproxy.py")
     s.set_defaults(fn=cmd_start)
     sub.add_parser("stop", help="stop the daemon").set_defaults(fn=cmd_stop)
+    sub.add_parser("modes", help="list presentation modes").set_defaults(fn=cmd_modes)
     args = p.parse_args(argv)
     return args.fn(args)
 

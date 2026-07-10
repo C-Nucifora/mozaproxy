@@ -67,27 +67,26 @@ cd ~/Documents/GitHub/mozaproxy
 ```
 
 The installer creates a venv, installs the udev rule, adds you to the `input`
-group (fallback access), and installs a **user** systemd service.
+group (fallback access), installs a `mozactl` launcher into `~/.local/bin`, and
+installs a (disabled) **user** systemd service.
 
-Then:
-
-```bash
-# replug the base (or reboot) so the udev rule applies, then:
-systemctl --user enable --now mozaproxy
-```
+> **Important:** the udev rule *hides* the real base from games permanently, so
+> the wheel is visible to games **only while the daemon runs**. Start it before
+> playing, stop it when done. Replug the base (or reboot) once after install so
+> the rule applies.
 
 ## Verify
 
 ```bash
-# the real MOZA node should no longer be tagged as a joystick for games:
-udevadm info /dev/input/event10 | grep ID_INPUT_JOYSTICK   # (expect: empty/absent)
-
-# a clean virtual wheel should exist:
-python -c "import evdev; [print(evdev.InputDevice(p).name) for p in evdev.list_devices()]"
+mozactl doctor     # base powered on? driver bound? real node hidden? group ok?
+mozactl start      # bring up the clean virtual wheel
+mozactl status     # expect: Base OK, Daemon running, Virtual wheel present -> "Ready."
 
 # force-feedback relay (the wheel should pull for ~1.5s):
 ./.venv/bin/python tools/ffbtest.py
 ```
+
+(If `~/.local/bin` isn't on your PATH, use `./.venv/bin/python mozactl.py ...`.)
 
 Then launch Forza with the wheel connected. Plain launch options are enough:
 
@@ -99,14 +98,21 @@ In the game, bind to the **"MOZA R25 (mozaproxy)"** device.
 
 ## Usage / tuning
 
-Run manually instead of the service:
+Everyday use is via `mozactl`:
 
 ```bash
-./.venv/bin/python mozaproxy.py -v            # foreground, debug logging
-./.venv/bin/python mozaproxy.py --buttons 32  # expose more buttons
+mozactl start                 # start the virtual wheel (Mode A)
+mozactl start -- --buttons 32 # pass daemon flags through
+mozactl status                # health of the whole pipeline
+mozactl stop                  # hide the wheel again
 ```
 
-Logs (service): `journalctl --user -u mozaproxy -f`
+Or run the daemon directly (foreground, Ctrl-C to stop):
+
+```bash
+./run.sh -v                   # foreground, debug logging (traces FFB)
+./.venv/bin/python mozaproxy.py --buttons 32
+```
 
 Useful flags:
 
@@ -126,9 +132,10 @@ blocks the legacy `jsN` node. Access for the daemon is preserved via `uaccess`
 (already applied by seat rules) plus `GROUP=input`.
 
 Because the rule hides the real node permanently, the wheel is available to games
-**only while the daemon runs** — which is why it ships as an always-on service.
-Boxflat still configures the base normally (it talks over the serial/HID channel,
-not this joystick node).
+**only while the daemon runs**. Start it with `mozactl start` before playing and
+`mozactl stop` when done (a disabled systemd unit is also installed if you prefer
+always-on: `systemctl --user enable --now mozaproxy`). Boxflat still configures
+the base normally (it talks over the serial channel, not this joystick node).
 
 If your distro's Proton build still finds the real device after the tag strip,
 the stronger fallback is to have the daemon-owner lock the node (root chmod);
@@ -137,8 +144,14 @@ open an issue and it can be added as an opt-in `--hide-mode` (see TODO).
 ## Status
 
 Built and verified: device creation, grab, event mirroring, and the full
-force-feedback relay path (upload/play/erase to the real base). In-game
-validation with Forza Horizon 5 is the remaining confirmation.
+force-feedback relay path (upload/play/erase to the real base), plus the
+`mozactl` status/doctor/start/stop tooling. In-game validation with Forza
+Horizon 5 is the remaining confirmation.
+
+The broader roadmap — a general per-game compatibility layer with selectable
+modes (wheel / gamepad-XInput / normalized) and a Steam-launch-option launcher
+that fixes the *binary-axis* and *controller-only* game classes, not just the FH5
+crash — is specced in [`docs/SPEC.md`](docs/SPEC.md).
 
 ## License
 

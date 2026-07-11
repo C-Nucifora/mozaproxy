@@ -149,10 +149,12 @@ Shipped seeds: `fh5`, `ac`, `acc`, `fs22`, `fs25` (Mode A), `normalized`
 `~/.config/mozaproxy/profiles/*.toml` and shadow seeds by name:
 
 ```toml
-# ~/.config/mozaproxy/profiles/mygame.toml
+# ~/.config/mozaproxy/profiles/mygame.toml   (scaffold one: mozactl new mygame)
 mode = "C"                    # A|B|C|D — triage a broken game: A, then C, then B
 buttons = 24
 ffb_gain = 80                 # clamp relayed FFB gain to 80%
+ffb_autocenter = 0            # seed autocenter (0 = force off) on attach
+ffb_drop = ["spring", "damper"]   # hide effect types the game's backend faults on
 notes = "reads axes as binary without mode C"
 [axes]
 steering = { deadzone = 0.03 }
@@ -160,7 +162,30 @@ throttle = { source = "ABS_Z", invert = false }   # usually from calibrate
 [proton]
 env = { PROTON_ENABLE_WAYLAND = "1" }
 steam_input = "off"           # prints a reminder; Steam can't be set from here
+[hooks]
+pre  = "boxflat --whatever"   # shell, before the daemon/game (e.g. base tuning)
+post = "notify-send done"     # shell, after the game exits (forces wait-mode)
 ```
+
+FFB tuning knobs: `ffb_gain` clamps every gain the game sets **and** seeds the
+base on attach, so it caps output even for games that never touch gain.
+`ffb_drop` un-advertises effect types (same crash class as the 128-button bug:
+some backends fault on specific PID effects); the kernel then rejects their
+upload before it reaches the relay. `ffb_autocenter` seeds a baseline the game
+may later override. Hooks run through the shell with the profile's env — the
+intended use is invoking Boxflat or other base tuning around a game session; a
+`post` hook makes `run` wait on the game instead of exec-replacing itself.
+
+### Beyond Steam
+
+`mozactl run` execs whatever command follows `--`, so the same profiles work
+outside Steam:
+
+- **Lutris**: set *System options → Command prefix* to `mozactl run <profile> --`.
+- **Native titles / plain Wine**: `mozactl run ac -- ./the-game` or
+  `mozactl run arcade -- wine game.exe`.
+- **No command at all**: `mozactl run <profile>` just puts the daemon in the
+  right mode (and runs the pre hook), then returns.
 
 ## Usage / tuning
 
@@ -172,6 +197,7 @@ mozactl start --mode C        # start in a specific mode
 mozactl modes                 # list modes
 mozactl list                  # list game profiles
 mozactl run <profile> -- CMD  # per-game launcher (Steam launch option)
+mozactl new <name> [--from P] # scaffold a user profile
 mozactl calibrate             # record real pedal axes (daemon stopped)
 mozactl status                # health of the whole pipeline
 mozactl stop                  # hide the wheel again

@@ -27,6 +27,7 @@ supplying valid basic-string escaping.
 """
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -35,6 +36,8 @@ import warnings
 from dataclasses import dataclass, field
 
 from evdev import ecodes
+
+from modes.base import canon_ff_type
 
 REPO_DIR = os.path.dirname(os.path.abspath(__file__))
 SEED_DIR = os.path.join(REPO_DIR, "profiles")
@@ -61,9 +64,13 @@ class Profile:
     mode: str = "A"                # canonical letter A|B|C|D
     buttons: int | None = None     # 1..128
     ffb_gain: int = 100            # 0..100
+    ffb_autocenter: int | None = None   # 0..100 seeded on attach; None = leave alone
+    ffb_drop: list[str] = field(default_factory=list)  # canonical FF_* names, sorted
     axes: dict[str, AxisOverride] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)
     steam_input: str = "default"   # "off" | "default"
+    hook_pre: str = ""             # shell command before the daemon/game
+    hook_post: str = ""            # shell command after the game exits
     notes: str = ""
     path: str = ""                 # file it was loaded from
 
@@ -95,10 +102,12 @@ def canon_mode(s: str) -> str:
 # would look like "the profile doesn't work", so unknown keys are errors that
 # name the file and the key.
 # ---------------------------------------------------------------------------
-_TOP_KEYS = frozenset({"name", "mode", "buttons", "ffb_gain", "notes", "axes", "proton"})
+_TOP_KEYS = frozenset({"name", "mode", "buttons", "ffb_gain", "ffb_autocenter",
+                       "ffb_drop", "notes", "axes", "proton", "hooks"})
 _AXIS_NAMES = ("steering", "throttle", "brake", "clutch")
 _AXIS_KEYS = frozenset({"source", "invert", "deadzone", "range"})
 _PROTON_KEYS = frozenset({"env", "steam_input"})
+_HOOK_KEYS = frozenset({"pre", "post"})
 
 
 def _is_int(v) -> bool:
@@ -186,6 +195,26 @@ def _parse_profile_file(path: str) -> Profile:
     if not _is_int(ffb_gain) or not 0 <= ffb_gain <= 100:
         raise ProfileError(f"{path}: 'ffb_gain' must be an integer in 0..100")
 
+    ffb_autocenter = data.get("ffb_autocenter")
+    if ffb_autocenter is not None and (
+            not _is_int(ffb_autocenter) or not 0 <= ffb_autocenter <= 100):
+        raise ProfileError(f"{path}: 'ffb_autocenter' must be an integer in 0..100")
+
+    ffb_drop: list[str] = []
+    if "ffb_drop" in data:
+        raw = data["ffb_drop"]
+        if not isinstance(raw, list) or not all(isinstance(v, str) for v in raw):
+            raise ProfileError(f"{path}: 'ffb_drop' must be a list of strings")
+        for v in raw:
+            try:
+                name = canon_ff_type(v)
+            except ValueError as e:
+                raise ProfileError(f"{path}: ffb_drop: {e}") from None
+            if name not in ffb_drop:
+                ffb_drop.append(name)
+        # Sorted so daemon_args renders identical argv for equivalent profiles.
+        ffb_drop.sort()
+
     notes = data.get("notes", "")
     if not isinstance(notes, str):
         raise ProfileError(f"{path}: 'notes' must be a string")
@@ -215,11 +244,26 @@ def _parse_profile_file(path: str) -> Profile:
                 raise ProfileError(
                     f"{path}: proton.steam_input must be 'off' or 'default'")
 
+    hook_pre = hook_post = ""
+    if "hooks" in data:
+        hooks = data["hooks"]
+        if not isinstance(hooks, dict):
+            raise ProfileError(f"{path}: [hooks] must be a table")
+        for key in hooks:
+            if key not in _HOOK_KEYS:
+                raise ProfileError(f"{path}: unknown key '{key}' in [hooks]")
+            if not isinstance(hooks[key], str):
+                raise ProfileError(f"{path}: hooks.{key} must be a string")
+        hook_pre = hooks.get("pre", "")
+        hook_post = hooks.get("post", "")
+
     # The filename stem is the lookup key; the in-file `name` is cosmetic only,
     # so a copied file can never impersonate another profile.
     stem = os.path.splitext(os.path.basename(path))[0]
     return Profile(name=stem, mode=mode, buttons=buttons, ffb_gain=ffb_gain,
-                   axes=axes, env=env, steam_input=steam_input, notes=notes,
+                   ffb_autocenter=ffb_autocenter, ffb_drop=ffb_drop,
+                   axes=axes, env=env, steam_input=steam_input,
+                   hook_pre=hook_pre, hook_post=hook_post, notes=notes,
                    path=path)
 
 
@@ -236,8 +280,12 @@ def load_profile(name_or_path: str) -> Profile:
         candidate = os.path.join(d, name_or_path + ".toml")
         if os.path.exists(candidate):
             return _parse_profile_file(candidate)
-    raise ProfileError(
-        f"no profile named {name_or_path!r} in {USER_DIR} or {SEED_DIR}")
+    msg = f"no profile named {name_or_path!r} in {USER_DIR} or {SEED_DIR}"
+    close = difflib.get_close_matches(
+        name_or_path, [p.name for p in list_profiles()], n=3, cutoff=0.5)
+    if close:
+        msg += f" — did you mean: {', '.join(close)}?"
+    raise ProfileError(msg)
 
 
 def list_profiles() -> list[Profile]:
@@ -329,6 +377,11 @@ def daemon_args(profile: Profile,
         argv += ["--buttons", str(profile.buttons)]
     if profile.ffb_gain != 100:
         argv += ["--ffb-gain", str(profile.ffb_gain)]
+    if profile.ffb_autocenter is not None:
+        argv += ["--ffb-autocenter", str(profile.ffb_autocenter)]
+    if profile.ffb_drop:
+        # Already sorted+canonical at parse time, so equivalent profiles agree.
+        argv += ["--ffb-drop", ",".join(profile.ffb_drop)]
     if mode in ("B", "C"):
         steering = merged.get("steering")
         if steering is not None and steering.deadzone is not None \
@@ -367,6 +420,9 @@ def _toml_key(k: str) -> str:
 def _toml_scalar(v) -> str:
     if isinstance(v, (str, bool, int, float)):
         return json.dumps(v)
+    if isinstance(v, list) and all(isinstance(x, (str, bool, int, float)) for x in v):
+        # json.dumps of a scalar list is also a valid TOML array.
+        return json.dumps(v)
     raise ProfileError(f"cannot emit {type(v).__name__} as a TOML value")
 
 
@@ -386,6 +442,10 @@ def emit_profile_toml(profile: Profile) -> str:
         lines.append(f"buttons = {profile.buttons}")
     if profile.ffb_gain != 100:
         lines.append(f"ffb_gain = {profile.ffb_gain}")
+    if profile.ffb_autocenter is not None:
+        lines.append(f"ffb_autocenter = {profile.ffb_autocenter}")
+    if profile.ffb_drop:
+        lines.append(f"ffb_drop = {_toml_scalar(profile.ffb_drop)}")
     if profile.notes:
         lines.append(f"notes = {_toml_scalar(profile.notes)}")
 
@@ -412,6 +472,13 @@ def emit_profile_toml(profile: Profile) -> str:
             lines.append(f"env = {_inline_table(list(profile.env.items()))}")
         if profile.steam_input != "default":
             lines.append(f"steam_input = {_toml_scalar(profile.steam_input)}")
+
+    if profile.hook_pre or profile.hook_post:
+        lines += ["", "[hooks]"]
+        if profile.hook_pre:
+            lines.append(f"pre = {_toml_scalar(profile.hook_pre)}")
+        if profile.hook_post:
+            lines.append(f"post = {_toml_scalar(profile.hook_post)}")
     return "\n".join(lines) + "\n"
 
 
@@ -423,6 +490,25 @@ def emit_calibration_toml(axes: dict[str, dict]) -> str:
     for axis in ordered:
         lines.append(f"{_toml_key(axis)} = {_inline_table(list(axes[axis].items()))}")
     return "\n".join(lines) + "\n"
+
+
+def save_profile(profile: Profile, force: bool = False) -> str:
+    """Write a profile to USER_DIR/<name>.toml (creating dirs); return the path.
+
+    Refuses to overwrite an existing user profile unless `force` — seeds are
+    never touched (a user file with the same name shadows the seed instead).
+    """
+    if not _BARE_KEY.match(profile.name):
+        raise ProfileError(
+            f"profile name {profile.name!r} must be letters/digits/_/- "
+            "(it becomes the filename)")
+    os.makedirs(USER_DIR, exist_ok=True)
+    path = os.path.join(USER_DIR, profile.name + ".toml")
+    if os.path.exists(path) and not force:
+        raise ProfileError(f"{path} already exists (use --force to overwrite)")
+    with open(path, "w") as f:
+        f.write(emit_profile_toml(profile))
+    return path
 
 
 def save_calibration(axes: dict[str, dict]) -> str:
@@ -455,6 +541,7 @@ __all__ = [
     "ProfileError", "AxisOverride", "Profile",
     "canon_mode", "load_profile", "list_profiles",
     "load_calibration", "merge_axes", "daemon_args", "launch_env",
-    "emit_profile_toml", "emit_calibration_toml", "save_calibration",
+    "emit_profile_toml", "emit_calibration_toml",
+    "save_profile", "save_calibration",
     "needs_restart",
 ]

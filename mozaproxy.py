@@ -40,7 +40,7 @@ import evdev
 from evdev import AbsInfo, InputDevice, UInput, ecodes, ff
 
 from modes import get_mode
-from modes.base import RealCaps, scale_gain
+from modes.base import FF_EFFECT_TYPES, RealCaps, canon_ff_type, scale_gain, strip_ff
 
 log = logging.getLogger("mozaproxy")
 
@@ -122,6 +122,12 @@ class Proxy:
         self.mode = args._mode           # active presentation mode (see modes/)
         # Per-profile FFB gain clamp (percent); 100 relays the game's gain as-is.
         self.ffb_gain: int = getattr(args, "ffb_gain", 100)
+        # Effect types the profile forbids (codes): stripped from the virtual
+        # device's advertisement AND refused at upload, for backends that fault
+        # on specific PID effects.
+        self.ffb_drop: frozenset[int] = getattr(args, "ffb_drop", frozenset())
+        # Autocenter percent to seed on attach; None leaves the base untouched.
+        self.ffb_autocenter: int | None = getattr(args, "ffb_autocenter", None)
         self.real: InputDevice | None = None
         self.virt: UInput | None = None
         # virtual effect id -> real effect id
@@ -161,6 +167,13 @@ class Proxy:
             ff_effects_count=self.real.ff_effects_count or 16,
         )
         spec = self.mode.build_spec(real)
+        if self.ffb_drop:
+            # Filter at advertisement time so the kernel refuses forbidden
+            # uploads before they reach the relay (see strip_ff).
+            spec.events = strip_ff(spec.events, self.ffb_drop)
+            names = {code: name for name, code in FF_EFFECT_TYPES.items()}
+            log.info("ffb-drop active: not advertising %s",
+                     ", ".join(sorted(names.get(c, str(c)) for c in self.ffb_drop)))
         self.virt = UInput(
             spec.events,
             name=spec.name,
@@ -234,6 +247,12 @@ class Proxy:
             effect = upload.effect
             vid = effect.id
             try:
+                # Forbidden types are already unadvertised (kernel rejects them
+                # first); this guard is for kernels/backends that upload anyway.
+                if effect.type in self.ffb_drop:
+                    log.debug("FF upload vid=%d refused by --ffb-drop", vid)
+                    upload.retval = -errno.EINVAL
+                    return
                 # Let the mode rewrite the effect first (e.g. gamepad mode turns
                 # a game's rumble into a periodic effect the wheel understands).
                 translated = self.mode.translate_effect(effect)
@@ -272,20 +291,29 @@ class Proxy:
         finally:
             self.virt.end_erase(erase)
 
-    def apply_initial_gain(self) -> None:
-        """Seed the real base with the profile-clamped gain right after attach.
+    def apply_initial_ffb(self) -> None:
+        """Seed the real base with profile FFB settings right after attach.
 
         WHY: a game that never writes FF_GAIN would otherwise leave the base at
         whatever gain it last had (typically full), silently bypassing the
-        profile's --ffb-gain clamp.
+        profile's --ffb-gain clamp. Same story for autocenter: --ffb-autocenter
+        sets a baseline for games that never touch it (a later game write still
+        passes through and wins).
         """
-        if self.ffb_gain == 100 or self.real is None:
+        if self.real is None:
             return
-        try:
-            self.real.write(ecodes.EV_FF, ecodes.FF_GAIN,
-                            scale_gain(0xFFFF, self.ffb_gain))
-        except OSError as exc:
-            log.debug("initial ffb gain write failed: %s", exc)
+        if self.ffb_gain != 100:
+            try:
+                self.real.write(ecodes.EV_FF, ecodes.FF_GAIN,
+                                scale_gain(0xFFFF, self.ffb_gain))
+            except OSError as exc:
+                log.debug("initial ffb gain write failed: %s", exc)
+        if self.ffb_autocenter is not None:
+            try:
+                self.real.write(ecodes.EV_FF, ecodes.FF_AUTOCENTER,
+                                scale_gain(0xFFFF, self.ffb_autocenter))
+            except OSError as exc:
+                log.debug("initial autocenter write failed: %s", exc)
 
     def _handle_ff_write(self, code: int, value: int) -> None:
         if code in FF_CONTROL_CODES:
@@ -363,7 +391,7 @@ def supervise(args) -> int:
                 time.sleep(2.0)
                 continue
             proxy.build_virtual()
-            proxy.apply_initial_gain()
+            proxy.apply_initial_ffb()
             proxy.run()
         except KeyboardInterrupt:
             proxy.close()
@@ -397,14 +425,27 @@ def _abs_code(s: str):
 
 
 def _gain_percent(s: str):
-    """argparse converter: FFB gain percentage, 0..100."""
+    """argparse converter: an FFB percentage (gain/autocenter), 0..100."""
     try:
         v = int(s)
     except ValueError:
         raise argparse.ArgumentTypeError(f"{s!r} is not an integer")
     if not 0 <= v <= 100:
-        raise argparse.ArgumentTypeError(f"ffb gain must be 0..100, got {v}")
+        raise argparse.ArgumentTypeError(f"percent must be 0..100, got {v}")
     return v
+
+
+def _ff_drop(s: str):
+    """argparse converter: comma list of FF effect-type names -> frozenset of codes."""
+    codes = set()
+    for part in s.split(","):
+        if not part.strip():
+            continue
+        try:
+            codes.add(FF_EFFECT_TYPES[canon_ff_type(part)])
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(str(e))
+    return frozenset(codes)
 
 
 def parse_args(argv=None):
@@ -419,6 +460,12 @@ def parse_args(argv=None):
     p.add_argument("--ffb-gain", type=_gain_percent, default=100,
                    help="clamp force-feedback gain to this percent 0..100 "
                         "(default 100 = relay the game's gain untouched)")
+    p.add_argument("--ffb-autocenter", type=_gain_percent, default=None,
+                   help="seed autocenter at this percent 0..100 on attach "
+                        "(default: leave the base's setting alone)")
+    p.add_argument("--ffb-drop", type=_ff_drop, default=frozenset(),
+                   help="comma list of FF effect types to hide from the game "
+                        "(e.g. spring,damper) for backends that fault on them")
     # Calibrated gamepad sources (mode B): which real axis feeds each pad axis.
     p.add_argument("--steer-src", type=_abs_code, default=None,
                    help="real axis feeding steering (ABS_* name or code; mode B)")

@@ -471,6 +471,20 @@ def cmd_run(args) -> int:
             return _exec_game(game_cmd, dict(os.environ))
         return 2
 
+    env = profiledb.launch_env(profile)
+    if profile.hook_pre:
+        # The Boxflat/base-tuning hook point: runs before the daemon comes up
+        # (Boxflat talks over the serial channel, independent of our grab).
+        print(f"Running pre hook: {profile.hook_pre}")
+        sys.stdout.flush()  # keep our line ahead of the hook's output in logs
+        try:
+            hrc = subprocess.call(profile.hook_pre, shell=True, env=env)
+        except OSError as e:
+            hrc = -1
+            print(_c("33", f"WARNING: pre hook failed to start: {e}"))
+        if hrc != 0:
+            print(_c("33", f"WARNING: pre hook exited {hrc}; continuing."))
+
     if profile.mode == "D":
         if daemon_pids():
             cmd_stop(None)
@@ -508,18 +522,56 @@ def cmd_run(args) -> int:
         print(_c("32", "Ready.") + f" Profile '{profile.name}' applied; no game command given.")
         return 0
 
-    env = profiledb.launch_env(profile)
-    if args.stop_after:
+    # A post hook needs someone alive after the game exits, so its presence
+    # forces wait-mode (child process) instead of exec-replacement. Steam still
+    # tracks the game fine as our child.
+    if args.stop_after or profile.hook_post:
+        sys.stdout.flush()
         try:
             rc = subprocess.call(game_cmd, env=env)
         except OSError as e:
             # A missing/unrunnable game binary must still stop the daemon.
             print(_c("31", f"could not run {game_cmd[0]!r}: {e}"))
             rc = 127
-        _terminate_daemon(wait=3.0)
-        _clear_state()
+        if profile.hook_post:
+            print(f"Running post hook: {profile.hook_post}")
+            sys.stdout.flush()
+            try:
+                subprocess.call(profile.hook_post, shell=True, env=env)
+            except OSError as e:
+                print(_c("33", f"WARNING: post hook failed to start: {e}"))
+        if args.stop_after:
+            _terminate_daemon(wait=3.0)
+            _clear_state()
         return rc
     return _exec_game(game_cmd, env)
+
+
+def cmd_new(args) -> int:
+    try:
+        import profiledb
+    except ImportError as e:
+        print(_c("31", f"profile support unavailable: {e}"))
+        return 1
+    try:
+        if args.copy_from:
+            profile = profiledb.load_profile(args.copy_from)
+            profile.name = args.name
+            if args.mode is not None:
+                profile.mode = profiledb.canon_mode(args.mode)
+        else:
+            profile = profiledb.Profile(
+                name=args.name,
+                mode=profiledb.canon_mode(args.mode or "A"),
+                notes="created by mozactl new; triage a broken game: A, then C, then B",
+            )
+        path = profiledb.save_profile(profile, force=args.force)
+    except profiledb.ProfileError as e:
+        print(_c("31", str(e)))
+        return 1
+    print(_c("32", "Created: ") + path)
+    print(f"Edit it, then use:  mozactl run {profile.name} -- %command%")
+    return 0
 
 
 def cmd_calibrate(_args) -> int:
@@ -583,6 +635,16 @@ def main(argv=None) -> int:
     r.add_argument("game_cmd", nargs=argparse.REMAINDER, metavar="-- CMD",
                    help="game command to launch; in Steam: -- %%command%%")
     r.set_defaults(fn=cmd_run)
+    n = sub.add_parser("new", help="create a user profile skeleton in "
+                                   "~/.config/mozaproxy/profiles")
+    n.add_argument("name", help="profile name (becomes <name>.toml)")
+    n.add_argument("--mode", default=None,
+                   help="mode for the new profile (default A, or --from's mode)")
+    n.add_argument("--from", dest="copy_from", default=None, metavar="PROFILE",
+                   help="copy settings from an existing profile")
+    n.add_argument("--force", action="store_true",
+                   help="overwrite an existing user profile of the same name")
+    n.set_defaults(fn=cmd_new)
     sub.add_parser("calibrate",
                    help="interactively map wheel/pedal axes (writes calibration.toml)"
                    ).set_defaults(fn=cmd_calibrate)

@@ -576,3 +576,141 @@ class TestSeedProfiles:
     def test_seeds_appear_in_list_profiles(self):
         names = {p.name for p in list_profiles()}
         assert SEED_NAMES <= names
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: ffb_drop / ffb_autocenter / [hooks] / save_profile / suggestions.
+# ---------------------------------------------------------------------------
+class TestFfbTuningSchema:
+    def test_ffb_drop_normalized_deduped_sorted(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\nffb_drop = ["spring", "FF_DAMPER", "Spring"]\n')
+        prof = load_profile(p)
+        assert prof.ffb_drop == ["FF_DAMPER", "FF_SPRING"]
+
+    def test_ffb_drop_unknown_type_rejected(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\nffb_drop = ["wobble"]\n')
+        with pytest.raises(ProfileError, match="wobble"):
+            load_profile(p)
+
+    def test_ffb_drop_must_be_string_list(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\nffb_drop = [1]\n')
+        with pytest.raises(ProfileError, match="ffb_drop"):
+            load_profile(p)
+
+    @pytest.mark.parametrize("bad", ["-1", "101", "true", '"50"'])
+    def test_ffb_autocenter_validated(self, dirs, bad):
+        user, _ = dirs
+        p = write(user, "g", f'mode = "A"\nffb_autocenter = {bad}\n')
+        with pytest.raises(ProfileError, match="ffb_autocenter"):
+            load_profile(p)
+
+    def test_ffb_autocenter_zero_is_valid_and_kept(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\nffb_autocenter = 0\n')
+        assert load_profile(p).ffb_autocenter == 0
+
+
+class TestHooksSchema:
+    def test_hooks_parsed(self, dirs):
+        user, _ = dirs
+        p = write(user, "g",
+                  'mode = "A"\n[hooks]\npre = "echo hi"\npost = "echo bye"\n')
+        prof = load_profile(p)
+        assert prof.hook_pre == "echo hi"
+        assert prof.hook_post == "echo bye"
+
+    def test_unknown_hook_key_rejected(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\n[hooks]\nduring = "x"\n')
+        with pytest.raises(ProfileError, match="during"):
+            load_profile(p)
+
+    def test_non_string_hook_rejected(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\n[hooks]\npre = 3\n')
+        with pytest.raises(ProfileError, match="hooks.pre"):
+            load_profile(p)
+
+
+class TestDaemonArgsFfbTuning:
+    def test_order_with_all_ffb_flags(self):
+        prof = Profile(name="g", mode="C", buttons=24, ffb_gain=70,
+                       ffb_autocenter=10, ffb_drop=["FF_DAMPER", "FF_SPRING"],
+                       axes={"steering": AxisOverride(deadzone=0.05)})
+        assert daemon_args(prof, {}) == [
+            "--mode", "C",
+            "--buttons", "24",
+            "--ffb-gain", "70",
+            "--ffb-autocenter", "10",
+            "--ffb-drop", "FF_DAMPER,FF_SPRING",
+            "--deadzone", "0.05",
+        ]
+
+    def test_autocenter_zero_still_rendered(self):
+        prof = Profile(name="g", mode="A", ffb_autocenter=0)
+        assert daemon_args(prof, {}) == ["--mode", "A", "--ffb-autocenter", "0"]
+
+    def test_round_trips_through_daemon_argparse(self):
+        import mozaproxy
+        from evdev import ecodes
+        prof = Profile(name="g", mode="B", ffb_gain=70, ffb_autocenter=10,
+                       ffb_drop=["FF_SPRING"])
+        args = mozaproxy.parse_args(daemon_args(prof, {}))
+        assert args.ffb_gain == 70
+        assert args.ffb_autocenter == 10
+        assert args.ffb_drop == frozenset({ecodes.FF_SPRING})
+
+
+class TestEmitFfbAndHooks:
+    def test_round_trip(self, dirs):
+        user, _ = dirs
+        prof = Profile(name="g", mode="B", ffb_gain=60, ffb_autocenter=5,
+                       ffb_drop=["FF_RUMBLE", "FF_SPRING"],
+                       hook_pre='boxflat --apply "my preset"',
+                       hook_post="notify-send 'done'")
+        p = write(user, "g", emit_profile_toml(prof))
+        back = load_profile(p)
+        assert back.ffb_gain == 60
+        assert back.ffb_autocenter == 5
+        assert back.ffb_drop == ["FF_RUMBLE", "FF_SPRING"]
+        assert back.hook_pre == prof.hook_pre
+        assert back.hook_post == prof.hook_post
+
+    def test_defaults_not_emitted(self):
+        text = emit_profile_toml(Profile(name="g", mode="A"))
+        assert "ffb_drop" not in text
+        assert "ffb_autocenter" not in text
+        assert "[hooks]" not in text
+
+
+class TestSaveProfile:
+    def test_writes_and_refuses_overwrite(self, dirs):
+        prof = Profile(name="g", mode="C")
+        path = profiledb.save_profile(prof)
+        assert os.path.exists(path)
+        assert load_profile("g").mode == "C"
+        with pytest.raises(ProfileError, match="--force"):
+            profiledb.save_profile(prof)
+        profiledb.save_profile(prof, force=True)  # must not raise
+
+    def test_rejects_path_like_names(self, dirs):
+        with pytest.raises(ProfileError, match="name"):
+            profiledb.save_profile(Profile(name="../evil", mode="A"))
+
+
+class TestSuggestions:
+    def test_close_match_suggested(self, dirs):
+        user, _ = dirs
+        write(user, "arcade", 'mode = "B"\n')
+        with pytest.raises(ProfileError, match="did you mean: arcade"):
+            load_profile("arcadde")
+
+    def test_no_suggestion_when_nothing_close(self, dirs):
+        user, _ = dirs
+        write(user, "arcade", 'mode = "B"\n')
+        with pytest.raises(ProfileError) as ei:
+            load_profile("zzzzzz")
+        assert "did you mean" not in str(ei.value)

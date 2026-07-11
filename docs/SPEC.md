@@ -226,15 +226,24 @@ becomes its profile row. Document this triage in the README.
 - *Accept (pending hardware):* a currently-binary game reads smooth analog in C
   or B. Needs the base on + the user to test in-game.
 
-**Phase 3 — Profiles + launcher UX.**
-- `mozactl run <profile> -- %command%`, profile DB, seeded profiles, Steam
-  launch-option docs.
+**Phase 3 — Profiles + launcher UX.** *Implemented.*
+- ✅ `mozactl run <profile> -- %command%`, profile DB (TOML, user dir shadows
+  seeds), seeded profiles, `mozactl calibrate`, Steam launch-option docs.
 - *Accept:* switching games = changing one launch-option string; no manual daemon
-  steps.
+  steps. (In-game validation pending hardware, same as Phase 2.)
 
-**Phase 4 — Polish & reach.**
-- FFB gain/effect tuning per profile; auto-detect suggestions; optional Boxflat
-  profile hooks. Explore non-Proton (native Linux titles, Wine-non-Steam, Lutris).
+**Phase 4 — Polish & reach.** *Implemented except where noted.*
+- ✅ FFB tuning per profile: `ffb_gain` (clamp + seed), `ffb_autocenter` (seed),
+  `ffb_drop` (un-advertise effect types whose PID blocks crash a backend).
+- ✅ Profile hooks (`[hooks] pre/post`, shell) — the generic form of "invoke
+  Boxflat around a session"; a Boxflat-specific integration stays out until its
+  CLI surface is worth pinning to.
+- ✅ Suggestions: `mozactl run` typo → did-you-mean; `mozactl new [--from]`
+  scaffolds profiles. (Full per-game auto-detection remains out of scope.)
+- ✅ Non-Proton reach documented (Lutris command prefix, native, plain Wine) —
+  `run` execs any command.
+- Deferred: latency measurement tooling (§9), `--hide-mode lock` fallback,
+  `axes.*.range` (still reserved/warned).
 
 ---
 

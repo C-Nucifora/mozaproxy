@@ -106,6 +106,56 @@ def scale_gain(value: int, percent: int) -> int:
     return scaled if scaled <= 0xFFFF else 0xFFFF
 
 
+# ---------------------------------------------------------------------------
+# FF effect-type names. One source of truth for profile validation (profiledb),
+# the daemon's --ffb-drop converter, and the advertisement filter below —
+# so "spring" in a profile, FF_SPRING on the CLI and the ecode all agree.
+# ---------------------------------------------------------------------------
+FF_EFFECT_TYPES: dict[str, int] = {
+    "FF_CONSTANT": ecodes.FF_CONSTANT,
+    "FF_PERIODIC": ecodes.FF_PERIODIC,
+    "FF_RAMP": ecodes.FF_RAMP,
+    "FF_SPRING": ecodes.FF_SPRING,
+    "FF_DAMPER": ecodes.FF_DAMPER,
+    "FF_FRICTION": ecodes.FF_FRICTION,
+    "FF_INERTIA": ecodes.FF_INERTIA,
+    "FF_RUMBLE": ecodes.FF_RUMBLE,
+}
+
+
+def canon_ff_type(name: str) -> str:
+    """Canonical FF_* name for an effect-type name ("spring" or "FF_SPRING").
+
+    Raises ValueError naming the valid choices on anything else.
+    """
+    n = str(name).strip().upper()
+    if not n.startswith("FF_"):
+        n = "FF_" + n
+    if n not in FF_EFFECT_TYPES:
+        valid = ", ".join(k[3:].lower() for k in FF_EFFECT_TYPES)
+        raise ValueError(f"unknown FF effect type {name!r}; expected one of {valid}")
+    return n
+
+
+def strip_ff(events: dict, drop: frozenset[int] | set[int]) -> dict:
+    """Remove dropped effect-type codes from a VirtualSpec events dict.
+
+    WHY: some game backends fault on specific PID effect types (the same class
+    of bug as the 128-button crash). Not advertising a type means the kernel
+    rejects the game's upload before it ever reaches the relay, so the filter
+    must happen at advertisement time, not just upload time. Removing the last
+    type removes EV_FF entirely (a device advertising EV_FF with no effects
+    confuses enumerators).
+    """
+    if not drop or ecodes.EV_FF not in events:
+        return events
+    kept = [c for c in events[ecodes.EV_FF] if c not in drop]
+    out = {k: v for k, v in events.items() if k != ecodes.EV_FF}
+    if kept:
+        out[ecodes.EV_FF] = kept
+    return out
+
+
 # Convenience axis specs modes reuse.
 SIGNED16 = AbsInfo(value=0, min=-32768, max=32767, fuzz=0, flat=0, resolution=0)
 TRIGGER8 = AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)
@@ -149,4 +199,5 @@ class Mode:
 __all__ = [
     "RealCaps", "VirtualSpec", "Mode",
     "rescale", "clamp", "scale_gain", "SIGNED16", "TRIGGER8", "HAT",
+    "FF_EFFECT_TYPES", "canon_ff_type", "strip_ff",
 ]

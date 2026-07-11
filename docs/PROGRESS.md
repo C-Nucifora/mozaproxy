@@ -8,10 +8,10 @@ Last updated: 2026-07-11. Snapshot for resuming after a restart.
 
 ## One-line status
 
-Phases 1–3 are **built, tested, and committed locally**. Nothing is pushed. The
+Phases 1–4 are **built, tested, and committed locally**. Nothing is pushed. The
 only open work is **in-game validation on hardware** (the base was powered off
-during development) and **Phase 4** (polish: per-profile effect tuning,
-auto-detect, Boxflat hooks, non-Steam launchers).
+during development); remaining deferred items are small (latency tooling,
+`--hide-mode lock`, `axes.*.range`).
 
 ## Git state
 
@@ -51,7 +51,9 @@ auto-detect, Boxflat hooks, non-Steam launchers).
 
 - `mozaproxy.py` — daemon. Grabs real base, builds a virtual uinput device from
   the active **Mode**, relays input real→virtual and FFB virtual→real. Flags:
-  `--mode {A,B,C}`, `--deadzone` (steering, modes B/C), `--ffb-gain 0..100`,
+  `--mode {A,B,C}`, `--deadzone` (steering, modes B/C), `--ffb-gain 0..100`
+  (clamps game gain + seeds on attach), `--ffb-autocenter 0..100` (seed),
+  `--ffb-drop spring,damper,…` (un-advertise effect types + refuse uploads),
   `--steer/throttle/brake/clutch-src ABS_*`, `--*-invert`.
 - `modes/` — presentation modes:
   - `base.py` — `Mode` contract, `RealCaps`/`VirtualSpec`, pure `rescale()` +
@@ -60,23 +62,27 @@ auto-detect, Boxflat hooks, non-Steam launchers).
   - `gamepad.py` — `GamepadMode` (B, Xbox360 `045e:028e`, rumble→periodic,
     calibratable srcs + inverts + steering deadzone).
   - `__init__.py` — `get_mode(key, ...)` registry, `list_modes()`.
-- `profiledb.py` — profile DB (Phase 3). TOML schema (mode/buttons/ffb_gain/
-  axes/proton env/steam_input), seed dir `profiles/` shadowed by
-  `~/.config/mozaproxy/profiles/`, calibration overlay
+- `profiledb.py` — profile DB (Phases 3–4). TOML schema (mode/buttons/ffb_gain/
+  ffb_autocenter/ffb_drop/axes/proton env/steam_input/hooks), seed dir
+  `profiles/` shadowed by `~/.config/mozaproxy/profiles/`, calibration overlay
   (`~/.config/mozaproxy/calibration.toml`), `daemon_args()` renders a profile
   into the daemon argv (ORDER IS A CONTRACT — compared verbatim vs the state
-  file), `needs_restart()`.
+  file), `needs_restart()`, `save_profile()` (mozactl new), did-you-mean
+  suggestions on unknown names.
 - `calibration.py` — `TravelTracker`/`detect_invert` (pure) +
   `interactive_calibrate()` (asks the user to move one control at a time,
   detects the axis + whether it rests at max → invert).
 - `mozactl.py` — CLI: `status`, `doctor [--fix]`, `start`, `stop`, `modes`,
-  `list`, `run <profile> [--stop-after] [--require-wheel] -- CMD…`,
-  `calibrate`. `run` is the Steam glue; it errs on the side of launching (a
-  broken profile/calibration or powered-off base never bricks the game start).
-  Runtime state: `$XDG_RUNTIME_DIR/mozaproxy.state.json` (pid/mode/argv/profile).
+  `list`, `run <profile> [--stop-after] [--require-wheel] -- CMD…`, `new
+  <name> [--mode M] [--from P] [--force]`, `calibrate`. `run` is the Steam
+  glue; it errs on the side of launching (a broken profile/calibration or
+  powered-off base never bricks the game start). Profile `[hooks] pre/post`
+  run through the shell around the game (post forces wait-mode instead of
+  exec). Runtime state: `$XDG_RUNTIME_DIR/mozaproxy.state.json`
+  (pid/mode/argv/profile).
 - `profiles/` — seeds: `fh5` `ac` `acc` `fs22` `fs25` (A), `normalized` (C),
   `arcade` (B).
-- `tests/` — 212 pytest cases (transforms, modes, profiledb, calibration), no
+- `tests/` — 248 pytest cases (transforms, modes, profiledb, calibration), no
   hardware: `.venv/bin/python -m pytest tests/ -q`.
 - `docs/SPEC.md` — design/roadmap. `tools/ffbtest.py`, `tools/fs_wheel_map.py`.
 
@@ -115,16 +121,15 @@ If `~/.local/bin` isn't on PATH, use `.venv/bin/python mozactl.py <cmd>`.
    `mozactl run fh5 -- %command%`; a binary-axis game reads smooth analog via
    `run normalized` or `run arcade`; `mozactl calibrate` detects the real pedal
    axes. Only the user can run this.
-2. **Phase 4 (not started):** per-profile effect filtering/tuning, auto-detect
-   suggestions, optional Boxflat profile hooks, non-Steam launchers (Lutris,
-   Wine). See `docs/SPEC.md` §8.
-3. Deferred detail: `axes.*.range` in profile TOML is accepted but warns
-   "reserved, not yet applied".
+2. Deferred (small): latency measurement tooling, opt-in `--hide-mode lock`
+   fallback, `axes.*.range` (accepted but warns "reserved, not yet applied"),
+   Boxflat-specific hook integration (generic `[hooks]` shell hooks exist).
 
 ## How this was built
 
-Subagent-driven per phase: locked contracts first, then parallel subagents for
+Phases 1–3 subagent-driven: locked contracts first, then parallel subagents for
 disjoint files, main-thread integration + inline review (Phase 3's multi-agent
 review pass was skipped — spend limit — replaced by a manual seam review that
 caught 3 launcher bugs: corrupt-calibration bricking `run`, `--stop-after` on a
 missing binary, non-canonical mode letters defeating the restart comparison).
+Phase 4 built inline (spend limit still in effect), same review discipline.

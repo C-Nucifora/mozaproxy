@@ -421,14 +421,14 @@ class TestProxyFfbGain:
 
     def test_initial_gain_seeded_when_clamped(self):
         proxy = _gain_proxy(40)
-        proxy.apply_initial_gain()
+        proxy.apply_initial_ffb()
         assert proxy.real.writes == [
             (ecodes.EV_FF, ecodes.FF_GAIN, scale_gain(0xFFFF, 40))
         ]
 
     def test_initial_gain_skipped_at_100(self):
         proxy = _gain_proxy(100)
-        proxy.apply_initial_gain()
+        proxy.apply_initial_ffb()
         assert proxy.real.writes == []
 
     def test_initial_gain_write_failure_swallowed(self):
@@ -438,4 +438,77 @@ class TestProxyFfbGain:
             raise OSError(19, "device gone")
 
         proxy.real.write = boom
-        proxy.apply_initial_gain()  # must not raise
+        proxy.apply_initial_ffb()  # must not raise
+
+
+class TestProxyFfbAutocenterAndDrop:
+    """Phase 4: autocenter seeding and effect-type drop, via the same fake real."""
+
+    def _proxy(self, **over):
+        defaults = dict(_mode=None, ffb_gain=100, ffb_autocenter=None,
+                        ffb_drop=frozenset())
+        defaults.update(over)
+        proxy = Proxy(types.SimpleNamespace(**defaults))
+        proxy.real = _FakeReal()
+        return proxy
+
+    def test_autocenter_seeded(self):
+        proxy = self._proxy(ffb_autocenter=25)
+        proxy.apply_initial_ffb()
+        assert proxy.real.writes == [
+            (ecodes.EV_FF, ecodes.FF_AUTOCENTER, scale_gain(0xFFFF, 25))
+        ]
+
+    def test_autocenter_zero_still_seeded(self):
+        # 0 means "force autocenter OFF", which is a real setting, not unset.
+        proxy = self._proxy(ffb_autocenter=0)
+        proxy.apply_initial_ffb()
+        assert proxy.real.writes == [(ecodes.EV_FF, ecodes.FF_AUTOCENTER, 0)]
+
+    def test_autocenter_unset_writes_nothing(self):
+        proxy = self._proxy()
+        proxy.apply_initial_ffb()
+        assert proxy.real.writes == []
+
+    def test_gain_and_autocenter_both_seed(self):
+        proxy = self._proxy(ffb_gain=40, ffb_autocenter=10)
+        proxy.apply_initial_ffb()
+        assert proxy.real.writes == [
+            (ecodes.EV_FF, ecodes.FF_GAIN, scale_gain(0xFFFF, 40)),
+            (ecodes.EV_FF, ecodes.FF_AUTOCENTER, scale_gain(0xFFFF, 10)),
+        ]
+
+    def test_legacy_namespace_without_new_fields(self):
+        # mozactl-spawned daemons always have the attrs, but Proxy must not
+        # require them (tests/other embedders build minimal namespaces).
+        proxy = Proxy(types.SimpleNamespace(_mode=None, ffb_gain=100))
+        proxy.real = _FakeReal()
+        proxy.apply_initial_ffb()
+        assert proxy.real.writes == []
+        assert proxy.ffb_drop == frozenset()
+
+
+class TestFfDropConverter:
+    def test_parses_comma_list_any_spelling(self):
+        from mozaproxy import _ff_drop
+        assert _ff_drop("spring,FF_DAMPER") == frozenset(
+            {ecodes.FF_SPRING, ecodes.FF_DAMPER})
+
+    def test_rejects_unknown_type(self):
+        import argparse
+        import pytest
+        from mozaproxy import _ff_drop
+        with pytest.raises(argparse.ArgumentTypeError):
+            _ff_drop("spring,wobble")
+
+    def test_via_parse_args(self):
+        from mozaproxy import parse_args
+        args = parse_args(["--ffb-drop", "spring,damper", "--ffb-autocenter", "30"])
+        assert args.ffb_drop == frozenset({ecodes.FF_SPRING, ecodes.FF_DAMPER})
+        assert args.ffb_autocenter == 30
+
+    def test_defaults(self):
+        from mozaproxy import parse_args
+        args = parse_args([])
+        assert args.ffb_drop == frozenset()
+        assert args.ffb_autocenter is None

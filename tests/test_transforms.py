@@ -81,3 +81,58 @@ class TestScaleGain:
     def test_overflow_clamps_to_16bit_max(self):
         assert scale_gain(0xFFFF + 1000, 100) == 0xFFFF
         assert scale_gain(0x20000, 75) == 0xFFFF
+
+
+# ---------------------------------------------------------------------------
+# FF effect-type helpers (Phase 4: per-profile effect filtering).
+# ---------------------------------------------------------------------------
+from evdev import ecodes
+
+from modes.base import FF_EFFECT_TYPES, canon_ff_type, strip_ff
+
+
+class TestCanonFfType:
+    def test_shorthand_and_canonical_and_case(self):
+        assert canon_ff_type("spring") == "FF_SPRING"
+        assert canon_ff_type("FF_SPRING") == "FF_SPRING"
+        assert canon_ff_type("Rumble") == "FF_RUMBLE"
+        assert canon_ff_type(" ff_damper ") == "FF_DAMPER"
+
+    def test_unknown_raises_with_choices(self):
+        import pytest
+        with pytest.raises(ValueError, match="spring"):
+            canon_ff_type("wobble")
+
+    def test_every_name_maps_to_its_ecode(self):
+        for name, code in FF_EFFECT_TYPES.items():
+            assert getattr(ecodes, name) == code
+            assert canon_ff_type(name) == name
+
+
+class TestStripFf:
+    def _events(self):
+        return {
+            ecodes.EV_ABS: [(ecodes.ABS_X, None)],
+            ecodes.EV_KEY: [ecodes.BTN_JOYSTICK],
+            ecodes.EV_FF: [ecodes.FF_CONSTANT, ecodes.FF_SPRING, ecodes.FF_DAMPER],
+        }
+
+    def test_drops_only_listed_types(self):
+        out = strip_ff(self._events(), {ecodes.FF_SPRING})
+        assert out[ecodes.EV_FF] == [ecodes.FF_CONSTANT, ecodes.FF_DAMPER]
+        # Non-FF sections are untouched.
+        assert out[ecodes.EV_ABS] == [(ecodes.ABS_X, None)]
+        assert out[ecodes.EV_KEY] == [ecodes.BTN_JOYSTICK]
+
+    def test_dropping_everything_removes_ev_ff_entirely(self):
+        out = strip_ff(self._events(), {ecodes.FF_CONSTANT, ecodes.FF_SPRING,
+                                        ecodes.FF_DAMPER})
+        assert ecodes.EV_FF not in out
+
+    def test_empty_drop_is_identity(self):
+        ev = self._events()
+        assert strip_ff(ev, frozenset()) is ev
+
+    def test_no_ff_section_is_identity(self):
+        ev = {ecodes.EV_ABS: []}
+        assert strip_ff(ev, {ecodes.FF_SPRING}) is ev

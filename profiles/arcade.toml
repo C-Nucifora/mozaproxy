@@ -1,0 +1,8 @@
+# Generic profile for controller-only / arcade titles with the binary-axis
+# symptom: wear the Xbox 360 face so they get real analog steering and pedals.
+name = "arcade"
+mode = "B"
+notes = "Generic profile for controller-only / arcade titles with the binary-axis symptom."
+
+[proton]
+steam_input = "off"

@@ -116,9 +116,51 @@ mozactl start --mode B            # XInput gamepad
 ```
 
 > Gamepad mode's throttle/brake/clutch source axes are best-guess defaults
-> (`throttle=ABS_Z`, `brake=ABS_RZ`) until calibration lands — if a pedal is on
-> the wrong trigger, that's the knob to adjust. A `mozactl calibrate` helper is
-> planned (Phase 3, see [`docs/SPEC.md`](docs/SPEC.md)).
+> (`throttle=ABS_Z`, `brake=ABS_RZ`). Run **`mozactl calibrate`** once (daemon
+> stopped, base on) to record your pedals' real axes — every profile picks the
+> calibration up automatically.
+
+## Profiles & Steam launch options
+
+Instead of juggling `mozactl start/stop` per game, give each game a **profile**
+and one launch-option string. A profile bundles: mode, button count, FFB gain,
+axis sources/deadzone/invert, and Proton env vars.
+
+```bash
+mozactl list                       # shipped + user profiles
+mozactl run fh5 -- game_cmd        # ensure daemon in the right mode, then exec
+mozactl calibrate                  # record pedal axes -> ~/.config/mozaproxy/calibration.toml
+```
+
+**Steam:** set a game's launch options to
+
+```
+mozactl run fh5 -- %command%
+```
+
+That's the whole per-game switch: `run` starts (or restarts) the daemon in the
+profile's mode only when needed, injects the profile's env vars, and `exec`s the
+game so Steam still tracks it. If the base is powered off, the game still
+launches (it just sees no wheel); add `--require-wheel` to make that fatal, or
+`--stop-after` to stop the daemon when the game exits.
+
+Shipped seeds: `fh5`, `ac`, `acc`, `fs22`, `fs25` (Mode A), `normalized`
+(Mode C), `arcade` (Mode B). Your own profiles live in
+`~/.config/mozaproxy/profiles/*.toml` and shadow seeds by name:
+
+```toml
+# ~/.config/mozaproxy/profiles/mygame.toml
+mode = "C"                    # A|B|C|D — triage a broken game: A, then C, then B
+buttons = 24
+ffb_gain = 80                 # clamp relayed FFB gain to 80%
+notes = "reads axes as binary without mode C"
+[axes]
+steering = { deadzone = 0.03 }
+throttle = { source = "ABS_Z", invert = false }   # usually from calibrate
+[proton]
+env = { PROTON_ENABLE_WAYLAND = "1" }
+steam_input = "off"           # prints a reminder; Steam can't be set from here
+```
 
 ## Usage / tuning
 
@@ -128,6 +170,9 @@ Everyday use is via `mozactl`:
 mozactl start                 # start the virtual wheel (Mode A, default)
 mozactl start --mode C        # start in a specific mode
 mozactl modes                 # list modes
+mozactl list                  # list game profiles
+mozactl run <profile> -- CMD  # per-game launcher (Steam launch option)
+mozactl calibrate             # record real pedal axes (daemon stopped)
 mozactl status                # health of the whole pipeline
 mozactl stop                  # hide the wheel again
 ```
@@ -168,15 +213,16 @@ open an issue and it can be added as an opt-in `--hide-mode` (see TODO).
 
 ## Status
 
-Built and verified: device creation, grab, event mirroring, and the full
-force-feedback relay path (upload/play/erase to the real base), plus the
-`mozactl` status/doctor/start/stop tooling. In-game validation with Forza
-Horizon 5 is the remaining confirmation.
+Built and verified (hardware-free tests + live device plumbing): device
+creation, grab, event mirroring, the full force-feedback relay path
+(upload/play/erase to the real base), the three presentation modes, the profile
+DB + `mozactl run` Steam launcher, `mozactl calibrate`, and the
+status/doctor/start/stop tooling. In-game validation (FH5 in Mode A, a
+binary-axis title in C/B) is the remaining confirmation.
 
-The broader roadmap — a general per-game compatibility layer with selectable
-modes (wheel / gamepad-XInput / normalized) and a Steam-launch-option launcher
-that fixes the *binary-axis* and *controller-only* game classes, not just the FH5
-crash — is specced in [`docs/SPEC.md`](docs/SPEC.md).
+The design and roadmap are specced in [`docs/SPEC.md`](docs/SPEC.md); Phase 4
+(per-profile effect tuning, auto-detect suggestions, Boxflat hooks, non-Steam
+launchers) is what's left.
 
 ## License
 

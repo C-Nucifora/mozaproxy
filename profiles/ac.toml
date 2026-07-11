@@ -1,0 +1,4 @@
+# Assetto Corsa.
+name = "ac"
+mode = "A"
+notes = "Works natively, but the udev hide-rule means the wheel only exists for games while the daemon runs — so route it through the proxy too."

@@ -1,7 +1,7 @@
-"""Tests for the pure axis math in modes.base.rescale."""
+"""Tests for the pure axis math in modes.base (rescale, scale_gain)."""
 from __future__ import annotations
 
-from modes.base import rescale
+from modes.base import rescale, scale_gain
 
 
 def test_endpoints_exact():
@@ -50,3 +50,34 @@ def test_value_just_outside_deadzone_is_nonzero():
 def test_degenerate_range_returns_dmin():
     # smin == smax must not raise; returns dmin.
     assert rescale(500, 100, 100, -32768, 32767) == -32768
+
+
+# ---------------------------------------------------------------------------
+# scale_gain — the per-profile FFB gain clamp.
+# ---------------------------------------------------------------------------
+class TestScaleGain:
+    def test_identity_at_100_percent(self):
+        assert scale_gain(0, 100) == 0
+        assert scale_gain(12345, 100) == 12345
+        assert scale_gain(0xFFFF, 100) == 0xFFFF
+
+    def test_zero_percent_silences(self):
+        assert scale_gain(0xFFFF, 0) == 0
+        assert scale_gain(1, 0) == 0
+        assert scale_gain(0, 0) == 0
+
+    def test_half_gain(self):
+        assert scale_gain(0xFFFF, 50) == 0x7FFF
+        assert scale_gain(40000, 50) == 20000
+
+    def test_floor_division(self):
+        assert scale_gain(99, 50) == 49
+        assert scale_gain(1, 99) == 0
+
+    def test_negative_value_clamps_to_zero(self):
+        assert scale_gain(-1, 100) == 0
+        assert scale_gain(-0xFFFF, 50) == 0
+
+    def test_overflow_clamps_to_16bit_max(self):
+        assert scale_gain(0xFFFF + 1000, 100) == 0xFFFF
+        assert scale_gain(0x20000, 75) == 0xFFFF

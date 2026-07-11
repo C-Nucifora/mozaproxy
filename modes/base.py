@@ -91,6 +91,21 @@ def rescale(value: int, smin: int, smax: int, dmin: int, dmax: int,
     return int(round(dmin + t * (dmax - dmin)))
 
 
+def scale_gain(value: int, percent: int) -> int:
+    """Scale an FF_GAIN value by a profile's gain percentage, clamped 0..0xFFFF.
+
+    WHY: per-profile FFB strength. The daemon applies this clamp to every
+    FF_GAIN the game writes AND to the initial gain it seeds on the real base
+    at attach, so a profile's --ffb-gain caps output whether or not the game
+    ever sets gain itself. Kernel gain is unsigned 16-bit, hence the 0..0xFFFF
+    clamp; negative inputs clamp to 0.
+    """
+    scaled = (value * percent) // 100
+    if scaled < 0:
+        return 0
+    return scaled if scaled <= 0xFFFF else 0xFFFF
+
+
 # Convenience axis specs modes reuse.
 SIGNED16 = AbsInfo(value=0, min=-32768, max=32767, fuzz=0, flat=0, resolution=0)
 TRIGGER8 = AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)
@@ -133,5 +148,5 @@ class Mode:
 
 __all__ = [
     "RealCaps", "VirtualSpec", "Mode",
-    "rescale", "clamp", "SIGNED16", "TRIGGER8", "HAT",
+    "rescale", "clamp", "scale_gain", "SIGNED16", "TRIGGER8", "HAT",
 ]

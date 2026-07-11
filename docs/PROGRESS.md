@@ -2,24 +2,25 @@
 
 Last updated: 2026-07-11. Snapshot for resuming after a restart.
 
-**Repo working directory:** `/home/christian/Documents/GitHub/mozaproxy`
+**Repo working directory:** `/home/christian/Documents/dev/personal/mozaproxy`
 
 ---
 
 ## One-line status
 
-Phase 1 (mozactl tooling) and Phase 2 (per-game presentation modes / binary-axis
-fix) are **built, tested, and committed locally**. Nothing is pushed. The only
-open work is **in-game validation on hardware** (the base was powered off during
-development) and **Phase 3** (profiles + launcher + calibrate).
+Phases 1–3 are **built, tested, and committed locally**. Nothing is pushed. The
+only open work is **in-game validation on hardware** (the base was powered off
+during development) and **Phase 4** (polish: per-profile effect tuning,
+auto-detect, Boxflat hooks, non-Steam launchers).
 
 ## Git state
 
 - Branch: `master`. **Local commits, NOT pushed.**
-- Recent commits:
+- Recent commits (newest first):
+  - Phase 3: profile DB + `mozactl run` launcher + `mozactl calibrate`
+  - `9541565` Add docs/PROGRESS.md resume snapshot
   - `8db9a39` Phase 2: per-game presentation modes (binary-axis fix)
   - `e52681e` Add mozactl (status/doctor/start/stop) + full-compat spec
-  - `512a068` Singleton guard + manual run helper (pre-existing)
 - To push when ready: `git push` (remote: github.com/C-Nucifora/mozaproxy).
 
 ## The hardware (MOZA R25 Ultra Base, `346e:0000`) — verified facts
@@ -40,29 +41,44 @@ development) and **Phase 3** (profiles + launcher + calibrate).
 ## The three original failure modes → fix
 
 1. **FH5 crashes on launch** (128-button + PID descriptor) → **Mode A** (slim
-   virtual wheel). Built pre-session; just needs the daemon running.
-2. **Axes read binary 0%/100%** (unsigned-steering vs signed-pedals convention
-   mismatch; XInput/SDL mismapping) → **Mode C** (normalized signed axes) or
-   **Mode B** (gamepad).
-3. **Inconsistent FFB** → single owned relay path + per-mode gain (Mode B
-   translates rumble→periodic).
+   virtual wheel), profile `fh5`.
+2. **Axes read binary 0%/100%** → **Mode C** (`normalized`) or **Mode B**
+   (`arcade`).
+3. **Inconsistent FFB** → single owned relay path + per-profile `ffb_gain`
+   clamp (applied to game FF_GAIN writes AND seeded on attach).
 
 ## What exists now (code map)
 
 - `mozaproxy.py` — daemon. Grabs real base, builds a virtual uinput device from
-  the active **Mode**, relays input real→virtual and FFB virtual→real. Has
-  `--mode {A,B,C}` / `--deadzone`.
+  the active **Mode**, relays input real→virtual and FFB virtual→real. Flags:
+  `--mode {A,B,C}`, `--deadzone` (steering, modes B/C), `--ffb-gain 0..100`,
+  `--steer/throttle/brake/clutch-src ABS_*`, `--*-invert`.
 - `modes/` — presentation modes:
-  - `base.py` — `Mode` contract (`build_spec`/`map_input`/`translate_effect`),
-    `RealCaps`/`VirtualSpec`, pure `rescale()` math, `SIGNED16/TRIGGER8/HAT`.
-  - `wheel.py` — `WheelMode` (A, passthrough), `NormalizedMode` (C, signed axes).
-  - `gamepad.py` — `GamepadMode` (B, Xbox360 `045e:028e`, rumble→periodic).
+  - `base.py` — `Mode` contract, `RealCaps`/`VirtualSpec`, pure `rescale()` +
+    `scale_gain()` math, `SIGNED16/TRIGGER8/HAT`.
+  - `wheel.py` — `WheelMode` (A), `NormalizedMode` (C).
+  - `gamepad.py` — `GamepadMode` (B, Xbox360 `045e:028e`, rumble→periodic,
+    calibratable srcs + inverts + steering deadzone).
   - `__init__.py` — `get_mode(key, ...)` registry, `list_modes()`.
-- `mozactl.py` — CLI: `status`, `doctor [--fix]`, `start [--mode X] [--deadzone]`,
-  `stop`, `modes`. Installed to `~/.local/bin/mozactl` by `install.sh`.
-- `tests/` — 44 pytest cases (transforms + all 3 modes + registry), run with **no
-  hardware**: `.venv/bin/python -m pytest tests/ -q`.
-- `docs/SPEC.md` — full design/roadmap. `tools/ffbtest.py`, `tools/fs_wheel_map.py`.
+- `profiledb.py` — profile DB (Phase 3). TOML schema (mode/buttons/ffb_gain/
+  axes/proton env/steam_input), seed dir `profiles/` shadowed by
+  `~/.config/mozaproxy/profiles/`, calibration overlay
+  (`~/.config/mozaproxy/calibration.toml`), `daemon_args()` renders a profile
+  into the daemon argv (ORDER IS A CONTRACT — compared verbatim vs the state
+  file), `needs_restart()`.
+- `calibration.py` — `TravelTracker`/`detect_invert` (pure) +
+  `interactive_calibrate()` (asks the user to move one control at a time,
+  detects the axis + whether it rests at max → invert).
+- `mozactl.py` — CLI: `status`, `doctor [--fix]`, `start`, `stop`, `modes`,
+  `list`, `run <profile> [--stop-after] [--require-wheel] -- CMD…`,
+  `calibrate`. `run` is the Steam glue; it errs on the side of launching (a
+  broken profile/calibration or powered-off base never bricks the game start).
+  Runtime state: `$XDG_RUNTIME_DIR/mozaproxy.state.json` (pid/mode/argv/profile).
+- `profiles/` — seeds: `fh5` `ac` `acc` `fs22` `fs25` (A), `normalized` (C),
+  `arcade` (B).
+- `tests/` — 212 pytest cases (transforms, modes, profiledb, calibration), no
+  hardware: `.venv/bin/python -m pytest tests/ -q`.
+- `docs/SPEC.md` — design/roadmap. `tools/ffbtest.py`, `tools/fs_wheel_map.py`.
 
 ## Modes cheat-sheet
 
@@ -72,20 +88,21 @@ development) and **Phase 3** (profiles + launcher + calibrate).
 | C | `C`/`normalized` | wheel, consistent signed axes | game reads axes as binary |
 | B | `B`/`gamepad` | Xbox 360 / XInput pad | controller-only / arcade titles |
 
-Triage a broken game: **A → C → B**.
+Triage a broken game: **A → C → B**, then save whichever works as a profile.
 
 ## RESUME HERE — validation runbook (needs base powered on)
 
 ```bash
-cd ~/Documents/GitHub/mozaproxy
+cd ~/Documents/dev/personal/mozaproxy
 ./install.sh                       # once — refreshes mozactl launcher + udev
 # power the wheelbase ON, then:
 mozactl doctor                     # base on? driver? real node hidden? group?
-mozactl start --mode A             # or C / B
-mozactl status                     # want: "Ready."
+mozactl calibrate                  # once: records real pedal axes + inverts
+mozactl list                       # see the seed profiles
+# Steam per-game launch options (the Phase 3 way):
+#   mozactl run fh5 -- %command%
+# or manually: mozactl start --mode A && mozactl status  (want: "Ready.")
 .venv/bin/python tools/ffbtest.py  # wheel should pull ~1.5s
-# launch game via Steam launch options, e.g.:
-#   PROTON_ENABLE_WAYLAND=1 %command%
 # bind to "MOZA R25 (mozaproxy)"  (Mode B shows as "MOZA R25 Pad (mozaproxy)")
 mozactl stop                       # when done (wheel hidden again)
 ```
@@ -94,15 +111,20 @@ If `~/.local/bin` isn't on PATH, use `.venv/bin/python mozactl.py <cmd>`.
 
 ## Open tasks
 
-1. **Validate on hardware** (base was off): FH5 boots w/ FFB in Mode A; a
-   binary-axis game reads smooth analog in Mode C or B. Only the user can run this.
-2. **Known caveat:** gamepad-mode pedal source axes are best-guess defaults
-   (`throttle=ABS_Z`, `brake=ABS_RZ`); may need swapping per real device.
-3. **Phase 3 (not started):** profile DB + `mozactl run <profile> -- %command%`
-   Steam launch-option launcher + `mozactl calibrate` (records real pedal axis
-   assignment). See `docs/SPEC.md` §4/§6/§8.
+1. **Validate on hardware** (base was off): FH5 boots w/ FFB via
+   `mozactl run fh5 -- %command%`; a binary-axis game reads smooth analog via
+   `run normalized` or `run arcade`; `mozactl calibrate` detects the real pedal
+   axes. Only the user can run this.
+2. **Phase 4 (not started):** per-profile effect filtering/tuning, auto-detect
+   suggestions, optional Boxflat profile hooks, non-Steam launchers (Lutris,
+   Wine). See `docs/SPEC.md` §8.
+3. Deferred detail: `axes.*.range` in profile TOML is accepted but warns
+   "reserved, not yet applied".
 
 ## How this was built
 
-Subagent-driven: a locked `modes/base.py` contract, then parallel subagents for
-`wheel.py`, `gamepad.py`, and `tests/`, with main-thread integration + review.
+Subagent-driven per phase: locked contracts first, then parallel subagents for
+disjoint files, main-thread integration + inline review (Phase 3's multi-agent
+review pass was skipped — spend limit — replaced by a manual seam review that
+caught 3 launcher bugs: corrupt-calibration bricking `run`, `--stop-after` on a
+missing binary, non-canonical mode letters defeating the restart comparison).

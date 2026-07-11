@@ -40,7 +40,7 @@ import evdev
 from evdev import AbsInfo, InputDevice, UInput, ecodes, ff
 
 from modes import get_mode
-from modes.base import RealCaps
+from modes.base import RealCaps, scale_gain
 
 log = logging.getLogger("mozaproxy")
 
@@ -120,6 +120,8 @@ class Proxy:
     def __init__(self, args):
         self.args = args
         self.mode = args._mode           # active presentation mode (see modes/)
+        # Per-profile FFB gain clamp (percent); 100 relays the game's gain as-is.
+        self.ffb_gain: int = getattr(args, "ffb_gain", 100)
         self.real: InputDevice | None = None
         self.virt: UInput | None = None
         # virtual effect id -> real effect id
@@ -270,9 +272,28 @@ class Proxy:
         finally:
             self.virt.end_erase(erase)
 
+    def apply_initial_gain(self) -> None:
+        """Seed the real base with the profile-clamped gain right after attach.
+
+        WHY: a game that never writes FF_GAIN would otherwise leave the base at
+        whatever gain it last had (typically full), silently bypassing the
+        profile's --ffb-gain clamp.
+        """
+        if self.ffb_gain == 100 or self.real is None:
+            return
+        try:
+            self.real.write(ecodes.EV_FF, ecodes.FF_GAIN,
+                            scale_gain(0xFFFF, self.ffb_gain))
+        except OSError as exc:
+            log.debug("initial ffb gain write failed: %s", exc)
+
     def _handle_ff_write(self, code: int, value: int) -> None:
         if code in FF_CONTROL_CODES:
-            # Global gain / autocenter apply directly.
+            # Global gain / autocenter apply directly. Gain is clamped by the
+            # profile percentage so it caps FFB strength regardless of what the
+            # game asks for; autocenter passes through untouched.
+            if code == ecodes.FF_GAIN:
+                value = scale_gain(value, self.ffb_gain)
             name = ecodes.FF.get(code, code)
             log.debug("FF control %s=%d", name, value)
             try:
@@ -342,6 +363,7 @@ def supervise(args) -> int:
                 time.sleep(2.0)
                 continue
             proxy.build_virtual()
+            proxy.apply_initial_gain()
             proxy.run()
         except KeyboardInterrupt:
             proxy.close()
@@ -360,6 +382,31 @@ def supervise(args) -> int:
     return 0
 
 
+def _abs_code(s: str):
+    """argparse converter: evdev ABS_* axis name (case-insensitive) or int literal."""
+    try:
+        return int(s, 0)
+    except ValueError:
+        pass
+    name = s.upper()
+    code = ecodes.ecodes.get(name)
+    if code is None or not name.startswith("ABS_"):
+        raise argparse.ArgumentTypeError(
+            f"{s!r} is not an evdev ABS_* axis name (e.g. ABS_Z) or an integer code")
+    return code
+
+
+def _gain_percent(s: str):
+    """argparse converter: FFB gain percentage, 0..100."""
+    try:
+        v = int(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{s!r} is not an integer")
+    if not 0 <= v <= 100:
+        raise argparse.ArgumentTypeError(f"ffb gain must be 0..100, got {v}")
+    return v
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="MOZA -> clean virtual wheel proxy with FFB relay")
     p.add_argument("--mode", default="A",
@@ -367,7 +414,28 @@ def parse_args(argv=None):
                         "(consistent signed axes; fixes binary-axis games), "
                         "B/gamepad (Xbox 360 / XInput). Default A.")
     p.add_argument("--deadzone", type=float, default=0.0,
-                   help="steering deadzone fraction 0..1 (mode C only, default 0)")
+                   help="deadzone fraction 0..1 applied to steering in modes B "
+                        "and C (default 0)")
+    p.add_argument("--ffb-gain", type=_gain_percent, default=100,
+                   help="clamp force-feedback gain to this percent 0..100 "
+                        "(default 100 = relay the game's gain untouched)")
+    # Calibrated gamepad sources (mode B): which real axis feeds each pad axis.
+    p.add_argument("--steer-src", type=_abs_code, default=None,
+                   help="real axis feeding steering (ABS_* name or code; mode B)")
+    p.add_argument("--throttle-src", type=_abs_code, default=None,
+                   help="real axis feeding throttle (ABS_* name or code; mode B)")
+    p.add_argument("--brake-src", type=_abs_code, default=None,
+                   help="real axis feeding brake (ABS_* name or code; mode B)")
+    p.add_argument("--clutch-src", type=_abs_code, default=None,
+                   help="real axis feeding clutch (ABS_* name or code; mode B)")
+    p.add_argument("--steer-invert", action="store_true",
+                   help="invert steering travel (mode B)")
+    p.add_argument("--throttle-invert", action="store_true",
+                   help="invert throttle travel (mode B)")
+    p.add_argument("--brake-invert", action="store_true",
+                   help="invert brake travel (mode B)")
+    p.add_argument("--clutch-invert", action="store_true",
+                   help="invert clutch travel (mode B)")
     # The following override mode defaults; unset (None) means 'use mode default'.
     p.add_argument("--buttons", type=int, default=None,
                    help=f"buttons to expose for wheel modes (mode default {DEFAULT_BUTTONS})")
@@ -400,6 +468,10 @@ def main(argv=None) -> int:
             buttons=args.buttons, name=args.name,
             vendor=args.vendor, product=args.product,
             steer_deadzone=args.deadzone,
+            steer_src=args.steer_src, throttle_src=args.throttle_src,
+            brake_src=args.brake_src, clutch_src=args.clutch_src,
+            steer_invert=args.steer_invert, throttle_invert=args.throttle_invert,
+            brake_invert=args.brake_invert, clutch_invert=args.clutch_invert,
         )
     except ValueError as exc:
         log.error("%s", exc)

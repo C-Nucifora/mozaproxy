@@ -9,7 +9,10 @@ it. Pick one with `--mode` (mozaproxy.py) or `mozactl start --mode ...`:
   B / gamepad      Xbox 360 / XInput pad (controller-only + arcade titles)
 
 `get_mode(key, ...)` resolves a selector to a constructed Mode. Overrides that
-are left None fall back to the mode's own defaults.
+are left None fall back to the mode's own defaults. The calibration parameters
+(steer/throttle/brake/clutch src + invert, steering deadzone in mode B) only
+affect the gamepad face; wheel faces mirror the real axis codes 1:1 so there is
+nothing to remap and they silently ignore them.
 """
 from __future__ import annotations
 
@@ -44,8 +47,16 @@ def _wheel_overrides(buttons, name, vendor, product) -> dict:
 
 def get_mode(key: str, *, buttons: int | None = None, name: str | None = None,
              vendor: int | None = None, product: int | None = None,
-             steer_deadzone: float = 0.0) -> Mode:
+             steer_deadzone: float = 0.0,
+             steer_src: int | None = None, throttle_src: int | None = None,
+             brake_src: int | None = None, clutch_src: int | None = None,
+             steer_invert: bool = False, throttle_invert: bool = False,
+             brake_invert: bool = False, clutch_invert: bool = False) -> Mode:
     """Resolve a mode selector (letter or alias) to a constructed Mode.
+
+    The src/invert parameters exist for the gamepad face, which remaps real
+    axes onto pad axes. Wheel faces (A/C) mirror the real axis codes 1:1 —
+    there is nothing to remap — so they silently ignore src/invert here.
 
     Raises ValueError on an unknown selector.
     """
@@ -64,7 +75,22 @@ def get_mode(key: str, *, buttons: int | None = None, name: str | None = None,
             go["vendor"] = vendor
         if product is not None:
             go["product"] = product
-        return GamepadMode(**go)
+        # Only pass source overrides that were actually set so GamepadMode's
+        # own calibratable defaults hold for the rest.
+        if steer_src is not None:
+            go["steer_src"] = steer_src
+        if throttle_src is not None:
+            go["throttle_src"] = throttle_src
+        if brake_src is not None:
+            go["brake_src"] = brake_src
+        if clutch_src is not None:
+            go["clutch_src"] = clutch_src
+        return GamepadMode(steer_deadzone=steer_deadzone,
+                           steer_invert=steer_invert,
+                           throttle_invert=throttle_invert,
+                           brake_invert=brake_invert,
+                           clutch_invert=clutch_invert,
+                           **go)
     valid = ", ".join(a[0] for a, _, _ in MODES)
     raise ValueError(f"unknown mode {key!r}; valid selectors: {valid} (or aliases)")
 

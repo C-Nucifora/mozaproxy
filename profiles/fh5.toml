@@ -1,0 +1,9 @@
+# Forza Horizon 5 — the title this project was built for (SPEC section 7).
+name = "fh5"
+mode = "A"
+buttons = 24
+notes = "Slim wheel face avoids the 128-button enumeration crash. Verify in-game FFB."
+
+[proton]
+env = { PROTON_ENABLE_WAYLAND = "1" }
+steam_input = "off"

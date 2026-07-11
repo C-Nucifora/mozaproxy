@@ -2,20 +2,29 @@
 """
 mozactl - operate and diagnose the mozaproxy compatibility layer.
 
-Phase 1 scope:
-  mozactl status            one-glance health of the whole pipeline
-  mozactl doctor [--fix]    deeper checks + suggested/automatic fixes
-  mozactl start [args...]   start the mozaproxy daemon (Mode A) in the background
-  mozactl stop              stop the daemon (wheel disappears from games)
+  mozactl status                 one-glance health of the whole pipeline
+  mozactl doctor [--fix]         deeper checks + suggested/automatic fixes
+  mozactl start [args...]        start the mozaproxy daemon in a chosen mode
+  mozactl stop                   stop the daemon (wheel disappears from games)
+  mozactl modes                  list the presentation modes (faces)
+  mozactl list                   list game profiles (shipped seeds + your own)
+  mozactl run PROFILE -- CMD...  apply PROFILE's mode/env, then exec the game
+  mozactl calibrate              interactive axis mapper -> calibration.toml
 
 The wheel is intentionally hidden from games at the udev layer, so it exists for
 games ONLY while the daemon runs. `status` makes that state obvious; `start`
 brings the clean virtual wheel up; `doctor` fixes the common setup gaps.
+
+`run` is the Steam glue: put `mozactl run <profile> -- %command%` in a game's
+launch options and the right mode, FFB gain, calibrated axes and Proton env are
+applied per game. It errs on the side of launching: a broken profile or a
+powered-off base must never brick the game start Steam asked for.
 """
 from __future__ import annotations
 
 import argparse
 import glob
+import json
 import os
 import subprocess
 import sys
@@ -26,6 +35,9 @@ VENV_PY = os.path.join(REPO_DIR, ".venv", "bin", "python")
 DAEMON = os.path.join(REPO_DIR, "mozaproxy.py")
 PIDFILE = os.path.join(
     os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "mozaproxy.pid"
+)
+STATEFILE = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "mozaproxy.state.json"
 )
 
 MOZA_VENDOR = 0x346E
@@ -134,6 +146,81 @@ def daemon_pids() -> list[int]:
     return pids
 
 
+# ---- runtime state ----------------------------------------------------------
+# `run` decides whether the daemon needs a restart by comparing the argv it
+# WANTS with the argv the daemon was STARTED with; the state file records the
+# latter (pid guards against a stale file surviving a crash or reboot).
+def _write_state(pid: int, mode: str, argv: list[str],
+                 profile: str | None = None) -> None:
+    state = {"pid": pid, "mode": mode, "argv": list(argv), "profile": profile}
+    try:
+        with open(STATEFILE, "w") as f:
+            json.dump(state, f)
+    except OSError:
+        pass
+
+
+def _read_state() -> dict | None:
+    """The recorded daemon state, or None if missing/corrupt."""
+    try:
+        with open(STATEFILE) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return state if isinstance(state, dict) else None
+
+
+def _clear_state() -> None:
+    try:
+        os.unlink(STATEFILE)
+    except OSError:
+        pass
+
+
+def _terminate_daemon(wait: float = 0.0) -> list[int]:
+    """SIGTERM every running daemon; optionally wait for them to exit.
+
+    The wait matters before a respawn: the dying daemon must release its
+    exclusive grab on the real base or the new one cannot take it.
+    """
+    pids = daemon_pids()
+    for pid in pids:
+        try:
+            os.kill(pid, 15)
+        except OSError as e:
+            print(f"Could not stop pid {pid}: {e}")
+    if pids and wait > 0:
+        deadline = time.time() + wait
+        while daemon_pids() and time.time() < deadline:
+            time.sleep(0.1)
+    return pids
+
+
+def _spawn_daemon(argv_tail: list[str]) -> int | None:
+    """Start mozaproxy.py with argv_tail; return its pid, or None on failure."""
+    present, _, _ = usb_present()
+    if not present:
+        print(_c("31", "Base not on USB — power the wheelbase on first."))
+        return None
+    py = VENV_PY if os.path.exists(VENV_PY) else sys.executable
+    proc = subprocess.Popen([py, DAEMON] + list(argv_tail), start_new_session=True)
+    try:
+        with open(PIDFILE, "w") as f:
+            f.write(str(proc.pid))
+    except OSError:
+        pass
+    time.sleep(1.5)
+    if proc.poll() is not None:
+        print(_c("31", "Daemon exited immediately — run for logs: ")
+              + f"{py} {DAEMON} {' '.join(argv_tail)} -v")
+        return None
+    if virtual_present():
+        print(_c("32", "Started.") + f" Virtual wheel up (pid {proc.pid}).")
+    else:
+        print(f"Started (pid {proc.pid}); virtual node not seen yet — check: mozactl status")
+    return proc.pid
+
+
 # ---- commands --------------------------------------------------------------
 def cmd_status(_args) -> int:
     present, pid, name = usb_present()
@@ -170,7 +257,14 @@ def cmd_status(_args) -> int:
 
     pids = daemon_pids()
     if pids:
-        line(OK, "Daemon running", f"pid {', '.join(map(str, pids))}")
+        detail = f"pid {', '.join(map(str, pids))}"
+        state = _read_state()
+        # Only trust the state file if it describes a daemon that is alive.
+        if state and state.get("pid") in pids:
+            detail += f", mode {state.get('mode', '?')}"
+            if state.get("profile"):
+                detail += f" (profile {state['profile']})"
+        line(OK, "Daemon running", detail)
     else:
         line(WARN, "Daemon running", "not running — start with: mozactl start")
 
@@ -259,35 +353,36 @@ def _user_in_input() -> bool:
         return False
 
 
+def _canonical_mode(selector: str) -> str:
+    """Canonical mode letter for the state file; plain `start` must never break
+    on a missing/unhappy profiledb, so fall back to the raw selector uppercased."""
+    try:
+        from profiledb import ProfileError, canon_mode
+        try:
+            return canon_mode(selector)
+        except ProfileError:
+            return selector.upper()
+    except ImportError:
+        return selector.upper()
+
+
 def cmd_start(args) -> int:
     if daemon_pids():
         print("Already running (pid %s)." % ", ".join(map(str, daemon_pids())))
         return 0
-    present, _, _ = usb_present()
-    if not present:
-        print(_c("31", "Base not on USB — power the wheelbase on first."))
-        return 1
-    py = VENV_PY if os.path.exists(VENV_PY) else sys.executable
-    cmd = [py, DAEMON, "--mode", args.mode]
+    # The canonical letter goes into argv so the state file compares equal to
+    # what a profile would render — otherwise `run` restarts a matching daemon
+    # just because `start --mode wheel` spelled the same mode differently.
+    mode = _canonical_mode(args.mode)
+    argv_tail = ["--mode", mode]
     if args.deadzone:
-        cmd += ["--deadzone", str(args.deadzone)]
-    cmd += args.daemon_args
-    print(f"Starting mode {args.mode.upper()} ...")
-    proc = subprocess.Popen(cmd, start_new_session=True)
-    try:
-        with open(PIDFILE, "w") as f:
-            f.write(str(proc.pid))
-    except OSError:
-        pass
-    time.sleep(1.5)
-    if virtual_present():
-        print(_c("32", "Started.") + f" Virtual wheel up (pid {proc.pid}).")
-        return 0
-    if proc.poll() is not None:
-        print(_c("31", "Daemon exited immediately — run for logs: ")
-              + f"{py} {DAEMON} -v")
+        argv_tail += ["--deadzone", str(args.deadzone)]
+    argv_tail += args.daemon_args
+    print(f"Starting mode {mode} ...")
+    pid = _spawn_daemon(argv_tail)
+    if pid is None:
         return 1
-    print(f"Started (pid {proc.pid}); virtual node not seen yet — check: mozactl status")
+    _write_state(pid, mode, argv_tail, None)
     return 0
 
 
@@ -302,15 +397,159 @@ def cmd_modes(_args) -> int:
 
 def cmd_stop(_args) -> int:
     pids = daemon_pids()
+    _clear_state()
     if not pids:
         print("Not running.")
         return 0
-    for pid in pids:
-        try:
-            os.kill(pid, 15)
-        except OSError as e:
-            print(f"Could not stop pid {pid}: {e}")
+    _terminate_daemon()
     print(f"Stopped ({', '.join(map(str, pids))}). Wheel is now hidden from games.")
+    return 0
+
+
+def cmd_list(_args) -> int:
+    try:
+        import profiledb
+    except ImportError as e:
+        print(_c("31", f"profile support unavailable: {e}"))
+        return 1
+    profiles = profiledb.list_profiles()
+    print(_c("1", "game profiles"))
+    if not profiles:
+        print("  (none found)")
+    else:
+        width = max(len(p.name) for p in profiles)
+        for prof in profiles:
+            src = "seed" if prof.path.startswith(profiledb.SEED_DIR + os.sep) else "user"
+            note = prof.notes.splitlines()[0] if prof.notes else ""
+            tail = f"  {_c('90', note)}" if note else ""
+            print(f"  {_c('36', prof.name.ljust(width))}  {prof.mode}  [{src}]{tail}")
+    print()
+    print("  Steam launch options:  " + _c("1", "mozactl run NAME -- %command%"))
+    print(f"  Your profiles (shadow seeds by name): {profiledb.USER_DIR}")
+    return 0
+
+
+def _exec_game(cmd: list[str], env: dict[str, str]) -> int:
+    """Replace this process with the game so Steam keeps tracking the real pid.
+
+    Only returns if exec itself fails.
+    """
+    # exec replaces the process image without flushing stdio; without this the
+    # warnings we just printed are silently lost when stdout is a pipe (Steam).
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        os.execvpe(cmd[0], cmd, env)
+    except OSError as e:
+        print(_c("31", f"could not exec {cmd[0]!r}: {e}"))
+        return 127
+
+
+def cmd_run(args) -> int:
+    game_cmd = list(args.game_cmd)
+    # argparse's REMAINDER swallows our own flags when they follow PROFILE;
+    # hoist them back out. Anything after the '--' separator is the game's.
+    while game_cmd and game_cmd[0] in ("--stop-after", "--require-wheel"):
+        setattr(args, game_cmd.pop(0).lstrip("-").replace("-", "_"), True)
+    if game_cmd and game_cmd[0] == "--":
+        del game_cmd[0]
+
+    try:
+        import profiledb
+    except ImportError as e:
+        print(_c("31", f"profile support unavailable: {e}"))
+        if game_cmd:
+            return _exec_game(game_cmd, dict(os.environ))
+        return 2
+    try:
+        profile = profiledb.load_profile(args.profile)
+    except profiledb.ProfileError as e:
+        # A broken profile must never brick the game launch Steam asked for.
+        print(_c("31", f"profile {args.profile!r}: {e}"))
+        if game_cmd:
+            print(_c("33", "Launching the game anyway, without mozaproxy."))
+            return _exec_game(game_cmd, dict(os.environ))
+        return 2
+
+    if profile.mode == "D":
+        if daemon_pids():
+            cmd_stop(None)
+        print(_c("33", "Mode D is passthrough: the udev rule still HIDES the real "
+                       "wheel from games — this only helps if the hide rule was removed."))
+    else:
+        try:
+            calib = profiledb.load_calibration()
+        except profiledb.ProfileError as e:
+            # A corrupt calibration overlay must not brick the launch either;
+            # run uncalibrated (mode defaults) and tell the user.
+            print(_c("33", f"WARNING: ignoring unreadable calibration: {e}"))
+            print(_c("33", "Re-run 'mozactl calibrate' to rewrite it."))
+            calib = {}
+        desired = profiledb.daemon_args(profile, calib)
+        if profiledb.needs_restart(_read_state(), desired, daemon_pids()):
+            _terminate_daemon(wait=3.0)
+            print(f"Starting mode {profile.mode} for profile '{profile.name}' ...")
+            pid = _spawn_daemon(desired)
+            if pid is not None:
+                _write_state(pid, profile.mode, desired, profile.name)
+            elif args.require_wheel:
+                return 1
+            else:
+                print(_c("31", "WARNING: no wheel daemon — the game will see NO wheel. "
+                               "Launching anyway (is the base powered on?)."))
+        else:
+            print(f"Daemon already in the right mode ({profile.mode}); leaving it running.")
+
+    if profile.steam_input == "off":
+        print("Reminder: disable Steam Input for this title "
+              "(game Properties -> Controller) — it cannot be set from here.")
+
+    if not game_cmd:
+        print(_c("32", "Ready.") + f" Profile '{profile.name}' applied; no game command given.")
+        return 0
+
+    env = profiledb.launch_env(profile)
+    if args.stop_after:
+        try:
+            rc = subprocess.call(game_cmd, env=env)
+        except OSError as e:
+            # A missing/unrunnable game binary must still stop the daemon.
+            print(_c("31", f"could not run {game_cmd[0]!r}: {e}"))
+            rc = 127
+        _terminate_daemon(wait=3.0)
+        _clear_state()
+        return rc
+    return _exec_game(game_cmd, env)
+
+
+def cmd_calibrate(_args) -> int:
+    if daemon_pids():
+        # The daemon's exclusive grab starves other readers; we would sample
+        # nothing but silence.
+        print(_c("31", "The daemon is running and holds an exclusive grab on the base."))
+        print("Run " + _c("1", "mozactl stop") + " first, then retry.")
+        return 1
+    try:
+        import calibration
+        import profiledb
+        from mozaproxy import find_real_device
+    except ImportError as e:
+        print(_c("31", f"calibration support unavailable: {e}"))
+        return 1
+    dev = find_real_device(MOZA_VENDOR, REAL_PRODUCT, "MOZA")
+    if dev is None:
+        print(_c("31", "Base not found — power the wheelbase on, then retry."))
+        return 1
+    try:
+        mapping = calibration.interactive_calibrate(dev)
+    finally:
+        dev.close()
+    if mapping is None:
+        print("Calibration aborted; nothing saved.")
+        return 1
+    path = profiledb.save_calibration(mapping)
+    print(_c("32", "Saved: ") + path)
+    print("Gamepad/normalized profiles now pick these axes up automatically.")
     return 0
 
 
@@ -332,6 +571,21 @@ def main(argv=None) -> int:
     s.set_defaults(fn=cmd_start)
     sub.add_parser("stop", help="stop the daemon").set_defaults(fn=cmd_stop)
     sub.add_parser("modes", help="list presentation modes").set_defaults(fn=cmd_modes)
+    sub.add_parser("list", help="list game profiles").set_defaults(fn=cmd_list)
+    r = sub.add_parser("run", help="apply a game profile, then exec the game "
+                                   "(Steam launch option)")
+    r.add_argument("profile", help="profile name from 'mozactl list' (or a .toml path)")
+    r.add_argument("--stop-after", action="store_true",
+                   help="wait for the game and stop the daemon when it exits "
+                        "(default: exec the game so Steam tracks it)")
+    r.add_argument("--require-wheel", action="store_true",
+                   help="refuse to launch the game if the daemon cannot start")
+    r.add_argument("game_cmd", nargs=argparse.REMAINDER, metavar="-- CMD",
+                   help="game command to launch; in Steam: -- %%command%%")
+    r.set_defaults(fn=cmd_run)
+    sub.add_parser("calibrate",
+                   help="interactively map wheel/pedal axes (writes calibration.toml)"
+                   ).set_defaults(fn=cmd_calibrate)
     args = p.parse_args(argv)
     return args.fn(args)
 

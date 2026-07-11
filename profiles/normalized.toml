@@ -1,0 +1,6 @@
+# Fallback for wheel-aware games that still misread axis ranges (the signed/
+# unsigned steering asymmetry): mode C rescales every axis to a consistent
+# signed range.
+name = "normalized"
+mode = "C"
+notes = "Fallback for wheel-aware games that misread axis ranges; set axes.steering.deadzone if the game jitters at center."

@@ -4,12 +4,16 @@ All pure/hardware-free: they use the RealCaps fixture (see conftest.py).
 """
 from __future__ import annotations
 
+import types
+
 import pytest
 from evdev import ecodes, ff
 
 from modes import get_mode, list_modes
+from modes.base import scale_gain
 from modes.gamepad import GamepadMode
 from modes.wheel import NormalizedMode, WheelMode
+from mozaproxy import Proxy
 
 
 # ---------------------------------------------------------------------------
@@ -258,3 +262,180 @@ class TestRegistry:
         pairs = list_modes()
         selectors = [s for s, _ in pairs]
         assert "A" in selectors and "B" in selectors and "C" in selectors
+
+
+# ---------------------------------------------------------------------------
+# GamepadMode calibration parameters (Phase 3): per-axis inverts + steering
+# deadzone applied on top of the source->pad rescale.
+# ---------------------------------------------------------------------------
+class TestGamepadCalibration:
+    def test_steer_invert_flips_endpoints(self, real_caps):
+        mode = GamepadMode(steer_invert=True)
+        mode.build_spec(real_caps)
+        (_, _, lo), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 0)
+        (_, _, hi), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 65535)
+        assert lo == 32767
+        assert hi == -32768
+
+    def test_throttle_invert(self, real_caps):
+        mode = GamepadMode(throttle_invert=True)
+        mode.build_spec(real_caps)
+        # Inverted pedal: rest at source MAX reads released, source MIN = full.
+        (_, code, released), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_Z, 32767)
+        (_, _, pressed), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_Z, -32768)
+        assert code == ecodes.ABS_RZ
+        assert released == 0
+        assert pressed == 255
+
+    def test_brake_invert(self, real_caps):
+        mode = GamepadMode(brake_invert=True)
+        mode.build_spec(real_caps)
+        (_, code, released), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_RZ, 32767)
+        (_, _, pressed), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_RZ, -32768)
+        assert code == ecodes.ABS_Z
+        assert released == 0
+        assert pressed == 255
+
+    def test_clutch_invert(self, real_caps):
+        mode = GamepadMode(clutch_src=ecodes.ABS_RX, clutch_invert=True)
+        mode.build_spec(real_caps)
+        (_, code, lo), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_RX, -32768)
+        (_, _, hi), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_RX, 32767)
+        assert code == ecodes.ABS_Y
+        assert lo == 32767
+        assert hi == -32768
+
+    def test_steer_deadzone_centers_and_keeps_endpoints(self, real_caps):
+        mode = GamepadMode(steer_deadzone=0.1)
+        mode.build_spec(real_caps)
+        (_, _, mid), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 32768)
+        assert mid == 0
+        (_, _, lo), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 0)
+        (_, _, hi), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 65535)
+        assert lo == -32768
+        assert hi == 32767
+
+    def test_steer_deadzone_does_not_affect_pedals(self, real_caps):
+        dz = GamepadMode(steer_deadzone=0.2)
+        dz.build_spec(real_caps)
+        plain = GamepadMode()
+        plain.build_spec(real_caps)
+        # A pedal near its source center would be flattened by a centered
+        # deadzone; it must match the deadzone-free mapping exactly.
+        for code in (ecodes.ABS_Z, ecodes.ABS_RZ):
+            assert (tuple(dz.map_input(ecodes.EV_ABS, code, 1000))
+                    == tuple(plain.map_input(ecodes.EV_ABS, code, 1000)))
+
+    def test_defaults_leave_mapping_unchanged(self, real_caps):
+        # All new params at defaults reproduce the pre-Phase-3 behavior.
+        mode = GamepadMode()
+        mode.build_spec(real_caps)
+        (_, _, val), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 65535)
+        assert val == 32767
+
+
+# ---------------------------------------------------------------------------
+# get_mode wiring of the Phase 3 calibration parameters.
+# ---------------------------------------------------------------------------
+class TestGetModeCalibrationWiring:
+    def test_gamepad_receives_srcs_inverts_deadzone(self):
+        mode = get_mode(
+            "B",
+            steer_src=ecodes.ABS_RX, throttle_src=ecodes.ABS_RY,
+            brake_src=ecodes.ABS_THROTTLE, clutch_src=ecodes.ABS_RUDDER,
+            steer_invert=True, throttle_invert=True,
+            brake_invert=True, clutch_invert=True,
+            steer_deadzone=0.05,
+        )
+        assert type(mode) is GamepadMode
+        assert mode.steer_src == ecodes.ABS_RX
+        assert mode.throttle_src == ecodes.ABS_RY
+        assert mode.brake_src == ecodes.ABS_THROTTLE
+        assert mode.clutch_src == ecodes.ABS_RUDDER
+        assert mode.steer_invert and mode.throttle_invert
+        assert mode.brake_invert and mode.clutch_invert
+        assert mode.steer_deadzone == 0.05
+
+    def test_gamepad_none_srcs_keep_mode_defaults(self):
+        mode = get_mode("B")
+        assert mode.steer_src == ecodes.ABS_X
+        assert mode.throttle_src == ecodes.ABS_Z
+        assert mode.brake_src == ecodes.ABS_RZ
+        assert mode.clutch_src is None
+        assert not mode.steer_invert
+        assert mode.steer_deadzone == 0.0
+
+    def test_wheel_mode_ignores_calibration_params(self, real_caps):
+        mode = get_mode("A", steer_src=ecodes.ABS_RX, steer_invert=True,
+                        throttle_invert=True)
+        assert type(mode) is WheelMode
+        mode.build_spec(real_caps)
+        # Passthrough is untouched: same code, same value.
+        assert list(mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 12345)) == [
+            (ecodes.EV_ABS, ecodes.ABS_X, 12345)
+        ]
+
+    def test_normalized_mode_ignores_calibration_params(self, real_caps):
+        mode = get_mode("C", brake_src=ecodes.ABS_RX, brake_invert=True,
+                        clutch_invert=True)
+        assert type(mode) is NormalizedMode
+        mode.build_spec(real_caps)
+        # Not inverted: source max still maps to destination max.
+        (_, _, hi), = mode.map_input(ecodes.EV_ABS, ecodes.ABS_RX, 32767)
+        assert hi == 32767
+
+
+# ---------------------------------------------------------------------------
+# Daemon FF_GAIN clamp: _handle_ff_write/apply_initial_gain only need a
+# .write()-able real device, so the scaling path is testable without hardware.
+# ---------------------------------------------------------------------------
+class _FakeReal:
+    def __init__(self):
+        self.writes: list[tuple[int, int, int]] = []
+
+    def write(self, etype, code, value):
+        self.writes.append((etype, code, value))
+
+
+def _gain_proxy(pct: int) -> Proxy:
+    proxy = Proxy(types.SimpleNamespace(_mode=None, ffb_gain=pct))
+    proxy.real = _FakeReal()
+    return proxy
+
+
+class TestProxyFfbGain:
+    def test_gain_write_scaled(self):
+        proxy = _gain_proxy(50)
+        proxy._handle_ff_write(ecodes.FF_GAIN, 0xFFFF)
+        assert proxy.real.writes == [(ecodes.EV_FF, ecodes.FF_GAIN, 0x7FFF)]
+
+    def test_gain_write_untouched_at_100(self):
+        proxy = _gain_proxy(100)
+        proxy._handle_ff_write(ecodes.FF_GAIN, 0xC000)
+        assert proxy.real.writes == [(ecodes.EV_FF, ecodes.FF_GAIN, 0xC000)]
+
+    def test_autocenter_untouched(self):
+        proxy = _gain_proxy(25)
+        proxy._handle_ff_write(ecodes.FF_AUTOCENTER, 0x8000)
+        assert proxy.real.writes == [(ecodes.EV_FF, ecodes.FF_AUTOCENTER, 0x8000)]
+
+    def test_initial_gain_seeded_when_clamped(self):
+        proxy = _gain_proxy(40)
+        proxy.apply_initial_gain()
+        assert proxy.real.writes == [
+            (ecodes.EV_FF, ecodes.FF_GAIN, scale_gain(0xFFFF, 40))
+        ]
+
+    def test_initial_gain_skipped_at_100(self):
+        proxy = _gain_proxy(100)
+        proxy.apply_initial_gain()
+        assert proxy.real.writes == []
+
+    def test_initial_gain_write_failure_swallowed(self):
+        proxy = _gain_proxy(40)
+
+        def boom(*_a):
+            raise OSError(19, "device gone")
+
+        proxy.real.write = boom
+        proxy.apply_initial_gain()  # must not raise

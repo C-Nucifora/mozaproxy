@@ -66,6 +66,11 @@ class GamepadMode(Mode):
         vendor: int = 0x045E,
         product: int = 0x028E,
         rumble_gain: float = 1.0,
+        steer_deadzone: float = 0.0,
+        steer_invert: bool = False,
+        throttle_invert: bool = False,
+        brake_invert: bool = False,
+        clutch_invert: bool = False,
     ) -> None:
         # Real ABS codes we read from. Calibratable: defaults are best-guesses
         # until `mozactl calibrate` records the real per-device assignment.
@@ -73,6 +78,16 @@ class GamepadMode(Mode):
         self.throttle_src = throttle_src
         self.brake_src = brake_src
         self.clutch_src = clutch_src
+
+        # Calibration outputs: some rigs report a pedal at rest at its range
+        # MAX (press = decreasing) while virtual triggers expect press =
+        # increasing; the per-axis inverts flip that. The deadzone applies to
+        # steering only — pedals must keep their raw curve.
+        self.steer_deadzone = steer_deadzone
+        self.steer_invert = steer_invert
+        self.throttle_invert = throttle_invert
+        self.brake_invert = brake_invert
+        self.clutch_invert = clutch_invert
 
         self.name = name
         self.vendor = vendor
@@ -160,19 +175,24 @@ class GamepadMode(Mode):
             if code == self.steer_src:
                 smin, smax = self._steer_range
                 return ((ecodes.EV_ABS, ecodes.ABS_X,
-                         rescale(value, smin, smax, -32768, 32767)),)
+                         rescale(value, smin, smax, -32768, 32767,
+                                 invert=self.steer_invert,
+                                 deadzone=self.steer_deadzone)),)
             if code == self.throttle_src:
                 smin, smax = self._throttle_range
                 return ((ecodes.EV_ABS, ecodes.ABS_RZ,
-                         rescale(value, smin, smax, 0, 255)),)
+                         rescale(value, smin, smax, 0, 255,
+                                 invert=self.throttle_invert)),)
             if code == self.brake_src:
                 smin, smax = self._brake_range
                 return ((ecodes.EV_ABS, ecodes.ABS_Z,
-                         rescale(value, smin, smax, 0, 255)),)
+                         rescale(value, smin, smax, 0, 255,
+                                 invert=self.brake_invert)),)
             if self.clutch_src is not None and code == self.clutch_src:
                 smin, smax = self._clutch_range
                 return ((ecodes.EV_ABS, ecodes.ABS_Y,
-                         rescale(value, smin, smax, -32768, 32767)),)
+                         rescale(value, smin, smax, -32768, 32767,
+                                 invert=self.clutch_invert)),)
             if code in (ecodes.ABS_HAT0X, ecodes.ABS_HAT0Y):
                 # Dpad passes straight through (both are -1..1 HAT axes).
                 return ((ecodes.EV_ABS, code, value),)

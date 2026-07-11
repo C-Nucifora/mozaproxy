@@ -1,0 +1,4 @@
+# Farming Simulator 25.
+name = "fs25"
+mode = "A"
+notes = "Needs explicit in-game axis mapping — use the tools/fs_wheel_map.py helper."

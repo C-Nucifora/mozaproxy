@@ -876,6 +876,8 @@ class TestAxisRangeSchema:
         p = load_profile("jdm")
         assert p.mode == "C"
         assert p.axis_range == (0, 32767)
-        assert p.identity_product == 0x0002
+        # Unrecognised MOZA id so JDM applies no per-device preset (its R9
+        # preset re-mangles our synthesized report); custom-bind in-game.
+        assert p.identity_product == 0x0FFF
         args = daemon_args(p, {})
         assert "--axis-range" in args and "0:32767" in args

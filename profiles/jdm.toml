@@ -1,25 +1,32 @@
 # JDM: Japanese Drift Master.
 #
-# JDM officially supports MOZA R5 and R9, so we present the same R9 identity
-# that unlocked FH5 (a supported id that provably enumerates cleanly under
-# Proton). Mode C with axis_range [0, 32767]: JDM (Unreal) reads axes through
-# a HID path that saturates on BOTH signed (-32768 min) and 16-bit-unsigned
-# (65535 max) ranges — custom-bound axes read only 0%/100%. A positive 15-bit
-# range never sets the sign bit, so signed and unsigned parsers agree on every
-# value. Re-do the in-game custom binding after any range change (JDM stores
-# per-device scaling from the binding session). Its FFB shipped rough and was
-# overhauled in the Physics 2.0 update — tune in-game FFB settings first, then
-# ffb_gain here if it stays light.
+# WHY NOT the R9 identity (346e:0002): JDM ships per-device INPUT presets (in
+# pakchunk0) that read each axis by a hardcoded Index into the wheel's HID
+# report and apply a fixed scale/offset calibrated to that model on WINDOWS.
+# Masquerading as an R9 makes JDM auto-apply its R9 preset, whose byte layout
+# and scale do NOT match our Proton-synthesized report — so it re-mangles any
+# range we send (the "2000%" pegged axes), and a manual bind can't win while
+# the preset is active.
+#
+# THE FIX: present an UNRECOGNISED MOZA wheel (product 0x0fff matches no JDM
+# preset). JDM then has no per-device map and falls back to generic custom
+# binding, which reads axes as-emitted — so our clean mode-C 0..32767 axes
+# bind correctly. FFB is unaffected: JDM drives force feedback through the
+# device's FFB capability (which Proton exposes from the real base via us),
+# not through the input preset.
+#
+# AFTER loading this: in JDM, RE-DO the custom binding from scratch (any old
+# binding stored the broken values). Bind steering + pedals fresh.
 name = "jdm"
 mode = "C"
 buttons = 24
 axis_range = [0, 32767]
-notes = "MOZA R9 identity + sign-safe 0..32767 axes (JDM saturates signed/unsigned-16 ranges). Re-do in-game custom binding after changes."
+notes = "Unrecognised MOZA id (no JDM preset) + sign-safe 0..32767 axes -> custom-bind in-game. If FFB dies, try identity product 0x0002 (R9) instead."
 
 [identity]
-name = "MOZA R9 Base"
+name = "MOZA Wheelbase (mozaproxy)"
 vendor = 0x346e
-product = 0x0002
+product = 0x0fff
 
 [proton]
 env = { PROTON_ENABLE_WAYLAND = "1" }

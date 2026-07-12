@@ -1,8 +1,15 @@
 # Forza Horizon 5 — the title this project was built for (SPEC section 7).
+#
+# identity = "real": FH5 matches wheels against a supported-hardware list by
+# USB name/vendor/product; an invented identity gets "this wheel profile is
+# incompatible with your current wheel". Cloning the real base's identity onto
+# the slim 24-button face is exactly what MOZA's Windows "Forza compatibility
+# mode" firmware does.
 name = "fh5"
 mode = "A"
 buttons = 24
-notes = "Slim wheel face avoids the 128-button enumeration crash. Verify in-game FFB."
+identity = "real"
+notes = "Slim wheel face with the real base's identity (FH5 wheel whitelist). Verify in-game FFB."
 
 [proton]
 env = { PROTON_ENABLE_WAYLAND = "1" }

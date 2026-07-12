@@ -559,7 +559,10 @@ class TestSeedProfiles:
         assert p.buttons == 24
         assert p.env == {"PROTON_ENABLE_WAYLAND": "1"}
         assert p.steam_input == "off"
-        assert daemon_args(p, {}) == ["--mode", "A", "--buttons", "24"]
+        # FH5 matches wheels by USB identity, so the seed clones the real base.
+        assert p.identity_real is True
+        assert daemon_args(p, {}) == ["--mode", "A", "--buttons", "24",
+                                      "--identity-real"]
 
     def test_arcade(self):
         p = load_profile("arcade")
@@ -714,3 +717,104 @@ class TestSuggestions:
         with pytest.raises(ProfileError) as ei:
             load_profile("zzzzzz")
         assert "did you mean" not in str(ei.value)
+
+
+# ---------------------------------------------------------------------------
+# Virtual-device identity (FH5 wheel-whitelist fix).
+# ---------------------------------------------------------------------------
+class TestIdentitySchema:
+    def test_identity_real(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\nidentity = "real"\n')
+        prof = load_profile(p)
+        assert prof.identity_real is True
+        assert prof.identity_name is None
+
+    def test_identity_table(self, dirs):
+        user, _ = dirs
+        p = write(user, "g",
+                  'mode = "A"\n[identity]\nname = "Gudsen MOZA R25 Ultra Base"\n'
+                  'vendor = 0x346e\nproduct = 0x0000\n')
+        prof = load_profile(p)
+        assert prof.identity_real is False
+        assert prof.identity_name == "Gudsen MOZA R25 Ultra Base"
+        assert prof.identity_vendor == 0x346E
+        assert prof.identity_product == 0x0000
+
+    def test_identity_bad_string_rejected(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\nidentity = "fake"\n')
+        with pytest.raises(ProfileError, match="identity"):
+            load_profile(p)
+
+    def test_identity_unknown_key_rejected(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\n[identity]\nserial = "x"\n')
+        with pytest.raises(ProfileError, match="serial"):
+            load_profile(p)
+
+    @pytest.mark.parametrize("bad", ["-1", "0x10000", "true", '"346e"'])
+    def test_identity_ids_validated(self, dirs, bad):
+        user, _ = dirs
+        p = write(user, "g", f'mode = "A"\n[identity]\nvendor = {bad}\n')
+        with pytest.raises(ProfileError, match="identity.vendor"):
+            load_profile(p)
+
+    def test_identity_empty_name_rejected(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\n[identity]\nname = ""\n')
+        with pytest.raises(ProfileError, match="identity.name"):
+            load_profile(p)
+
+
+class TestIdentityDaemonArgs:
+    def test_identity_real_flag_position(self):
+        prof = Profile(name="g", mode="A", buttons=24, identity_real=True,
+                       ffb_gain=80)
+        assert daemon_args(prof, {}) == [
+            "--mode", "A", "--buttons", "24", "--identity-real",
+            "--ffb-gain", "80",
+        ]
+
+    def test_explicit_identity_rendered_hex(self):
+        prof = Profile(name="g", mode="A",
+                       identity_name="Gudsen MOZA R25 Ultra Base",
+                       identity_vendor=0x346E, identity_product=0)
+        assert daemon_args(prof, {}) == [
+            "--mode", "A",
+            "--name", "Gudsen MOZA R25 Ultra Base",
+            "--vendor", "0x346e",
+            "--product", "0x0000",
+        ]
+
+    def test_round_trips_through_daemon_argparse(self):
+        import mozaproxy
+        prof = Profile(name="g", mode="A", identity_real=True)
+        args = mozaproxy.parse_args(daemon_args(prof, {}))
+        assert args.identity_real is True
+        prof2 = Profile(name="g", mode="A", identity_vendor=0x346E,
+                        identity_product=0)
+        args2 = mozaproxy.parse_args(daemon_args(prof2, {}))
+        assert args2.vendor == 0x346E
+        assert args2.product == 0
+
+
+class TestIdentityEmit:
+    def test_identity_real_round_trip(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", emit_profile_toml(Profile(name="g", mode="A",
+                                                       identity_real=True)))
+        assert load_profile(p).identity_real is True
+
+    def test_identity_table_round_trip(self, dirs):
+        user, _ = dirs
+        prof = Profile(name="g", mode="A", identity_name="X wheel",
+                       identity_vendor=0x346E, identity_product=0x0000,
+                       axes={"steering": AxisOverride(deadzone=0.05)})
+        p = write(user, "g", emit_profile_toml(prof))
+        back = load_profile(p)
+        assert back.identity_name == "X wheel"
+        assert back.identity_vendor == 0x346E
+        assert back.identity_product == 0
+        # [identity] must not have swallowed the [axes] table.
+        assert back.axes["steering"].deadzone == 0.05

@@ -17,12 +17,21 @@ from evdev import InputDevice, ecodes, ff
 
 
 def find_virtual(name_sub="mozaproxy"):
+    """Find the daemon's virtual device.
+
+    Matched by name, or — when a profile clones the real base's identity
+    (identity = "real") — by being a MOZA-vendor device on a non-USB (uinput)
+    transport. Never returns the real base: its phys starts with "usb".
+    """
     for path in evdev.list_devices():
         try:
             dev = InputDevice(path)
         except OSError:
             continue
-        if name_sub.lower() in dev.name.lower() and ecodes.EV_FF in dev.capabilities():
+        phys = dev.phys or ""
+        is_virtual = (name_sub.lower() in dev.name.lower()
+                      or (dev.info.vendor == 0x346E and not phys.startswith("usb")))
+        if is_virtual and ecodes.EV_FF in dev.capabilities():
             return dev
         dev.close()
     return None

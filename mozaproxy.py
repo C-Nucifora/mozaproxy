@@ -57,6 +57,18 @@ DEFAULT_BUTTONS = 24      # a normal wheel exposes ~25; well under DInput's 128
 FF_CONTROL_CODES = {ecodes.FF_GAIN, ecodes.FF_AUTOCENTER}
 
 
+def usb_backed(phys: str | None) -> bool:
+    """True if an evdev node sits on real USB hardware (not uinput).
+
+    Identity cloning (--identity-real: the virtual device wears the real
+    base's exact name/ids so games like FH5 match their wheel profile) makes
+    name/id checks useless for telling real from virtual. The transport is the
+    reliable discriminator: the real base's phys is "usb-...", while our
+    python-evdev uinput devices report "py-evdev-uinput".
+    """
+    return bool(phys) and phys.startswith("usb")
+
+
 def find_real_device(vendor: int, product: int, name_hint: str | None) -> InputDevice | None:
     """Locate the real MOZA base evdev node (the one that carries the axes)."""
     for path in evdev.list_devices():
@@ -69,8 +81,11 @@ def find_real_device(vendor: int, product: int, name_hint: str | None) -> InputD
         is_moza = info.vendor == vendor and info.product == product
         if name_hint and name_hint.lower() in dev.name.lower():
             is_moza = True
-        # The base exposes both axes and force feedback; accessory/HID nodes do not.
-        if is_moza and ecodes.EV_ABS in caps and ecodes.EV_FF in caps:
+        # The base exposes both axes and force feedback; accessory/HID nodes do
+        # not. usb_backed() keeps us from ever matching our own virtual device
+        # (mandatory once identity cloning makes it look like the real thing).
+        if (is_moza and usb_backed(dev.phys)
+                and ecodes.EV_ABS in caps and ecodes.EV_FF in caps):
             return dev
         dev.close()
     return None
@@ -167,6 +182,17 @@ class Proxy:
             ff_effects_count=self.real.ff_effects_count or 16,
         )
         spec = self.mode.build_spec(real)
+        if getattr(self.args, "identity_real", False):
+            # Wear the real base's exact identity. Games with wheel whitelists
+            # (FH5) match on USB name/ids; presenting the true identity with a
+            # slimmed profile is exactly what MOZA's Windows "Forza
+            # compatibility mode" firmware does. Safe: the udev hide-rule
+            # matches USB parent ATTRS, which a uinput device does not have,
+            # and everything that must tell real from virtual uses usb_backed().
+            spec.name = self.real.name
+            spec.vendor = self.real.info.vendor
+            spec.product = self.real.info.product
+            spec.version = self.real.info.version
         if self.ffb_drop:
             # Filter at advertisement time so the kernel refuses forbidden
             # uploads before they reach the relay (see strip_ff).
@@ -486,6 +512,10 @@ def parse_args(argv=None):
     # The following override mode defaults; unset (None) means 'use mode default'.
     p.add_argument("--buttons", type=int, default=None,
                    help=f"buttons to expose for wheel modes (mode default {DEFAULT_BUTTONS})")
+    p.add_argument("--identity-real", action="store_true",
+                   help="clone the real base's name/vendor/product onto the "
+                        "virtual device (games with wheel whitelists, e.g. FH5, "
+                        "match on identity; overrides --name/--vendor/--product)")
     p.add_argument("--name", default=None, help="override virtual device name")
     p.add_argument("--vendor", type=lambda x: int(x, 0), default=None,
                    help="override virtual device USB vendor id")

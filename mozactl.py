@@ -100,11 +100,18 @@ def _iter_evdev():
 
 
 def real_evdev_path() -> str | None:
-    """The real base's event node (has axes + force feedback)."""
+    """The real base's event node (has axes + force feedback).
+
+    usb_backed keeps this from matching the virtual device when a profile
+    clones the real identity (identity = "real"): same name/ids, but the
+    virtual node's phys is uinput, not usb.
+    """
     from evdev import ecodes
+    from mozaproxy import usb_backed
     for d in _iter_evdev():
         c = d.capabilities()
         if (d.info.vendor == MOZA_VENDOR and d.info.product == REAL_PRODUCT
+                and usb_backed(d.phys)
                 and ecodes.EV_ABS in c and ecodes.EV_FF in c):
             return d.path
     return None
@@ -112,10 +119,12 @@ def real_evdev_path() -> str | None:
 
 def virtual_present() -> str | None:
     """The mozaproxy virtual device name, if the daemon has created it."""
+    from mozaproxy import usb_backed
     for d in _iter_evdev():
-        if d.info.vendor == MOZA_VENDOR and d.info.product == VIRT_PRODUCT:
-            return d.name
         if "mozaproxy" in d.name.lower():
+            return d.name
+        # An identity-cloned virtual wheel: MOZA ids on a non-USB (uinput) node.
+        if d.info.vendor == MOZA_VENDOR and not usb_backed(d.phys):
             return d.name
     return None
 

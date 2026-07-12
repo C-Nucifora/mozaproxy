@@ -109,7 +109,10 @@ mozactl list                       # see the seed profiles
 #   mozactl run fh5 -- %command%
 # or manually: mozactl start --mode A && mozactl status  (want: "Ready.")
 .venv/bin/python tools/ffbtest.py  # wheel should pull ~1.5s
-# bind to "MOZA R25 (mozaproxy)"  (Mode B shows as "MOZA R25 Pad (mozaproxy)")
+# bind to the virtual wheel: named "MOZA R25 (mozaproxy)" normally, but the
+# real base's name when a profile sets identity = "real" (fh5 does — FH5
+# whitelists wheels by USB identity). Mode B shows "MOZA R25 Pad (mozaproxy)".
+# Real vs virtual is discriminated by phys (usb-… vs py-evdev-uinput).
 mozactl stop                       # when done (wheel hidden again)
 ```
 

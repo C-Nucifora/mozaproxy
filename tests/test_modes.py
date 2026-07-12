@@ -512,3 +512,20 @@ class TestFfDropConverter:
         args = parse_args([])
         assert args.ffb_drop == frozenset()
         assert args.ffb_autocenter is None
+
+
+class TestUsbBacked:
+    """Transport-based real/virtual discrimination (identity cloning)."""
+
+    def test_real_base_phys(self):
+        from mozaproxy import usb_backed
+        assert usb_backed("usb-0000:00:14.0-5.1.2/input2") is True
+
+    def test_uinput_phys(self):
+        from mozaproxy import usb_backed
+        assert usb_backed("py-evdev-uinput") is False
+
+    def test_missing_phys(self):
+        from mozaproxy import usb_backed
+        assert usb_backed("") is False
+        assert usb_backed(None) is False

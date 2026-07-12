@@ -66,6 +66,13 @@ class Profile:
     ffb_gain: int = 100            # 0..100
     ffb_autocenter: int | None = None   # 0..100 seeded on attach; None = leave alone
     ffb_drop: list[str] = field(default_factory=list)  # canonical FF_* names, sorted
+    # Virtual-device identity. identity_real clones the real base's name/ids at
+    # attach (games with wheel whitelists, e.g. FH5, match on identity); the
+    # explicit fields present a fixed identity instead. Mutually exclusive.
+    identity_real: bool = False
+    identity_name: str | None = None
+    identity_vendor: int | None = None    # 0..0xFFFF (0 is real: MOZA base is 346e:0000)
+    identity_product: int | None = None
     axes: dict[str, AxisOverride] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)
     steam_input: str = "default"   # "off" | "default"
@@ -103,7 +110,8 @@ def canon_mode(s: str) -> str:
 # name the file and the key.
 # ---------------------------------------------------------------------------
 _TOP_KEYS = frozenset({"name", "mode", "buttons", "ffb_gain", "ffb_autocenter",
-                       "ffb_drop", "notes", "axes", "proton", "hooks"})
+                       "ffb_drop", "identity", "notes", "axes", "proton", "hooks"})
+_IDENTITY_KEYS = frozenset({"name", "vendor", "product"})
 _AXIS_NAMES = ("steering", "throttle", "brake", "clutch")
 _AXIS_KEYS = frozenset({"source", "invert", "deadzone", "range"})
 _PROTON_KEYS = frozenset({"env", "steam_input"})
@@ -219,6 +227,41 @@ def _parse_profile_file(path: str) -> Profile:
     if not isinstance(notes, str):
         raise ProfileError(f"{path}: 'notes' must be a string")
 
+    identity_real = False
+    identity_name: str | None = None
+    identity_vendor: int | None = None
+    identity_product: int | None = None
+    if "identity" in data:
+        ident = data["identity"]
+        if isinstance(ident, str):
+            if ident != "real":
+                raise ProfileError(
+                    f"{path}: identity must be \"real\" or an [identity] table")
+            identity_real = True
+        elif isinstance(ident, dict):
+            for key in ident:
+                if key not in _IDENTITY_KEYS:
+                    raise ProfileError(f"{path}: unknown key '{key}' in [identity]")
+            if "name" in ident:
+                if not isinstance(ident["name"], str) or not ident["name"]:
+                    raise ProfileError(
+                        f"{path}: identity.name must be a non-empty string")
+                identity_name = ident["name"]
+            for key in ("vendor", "product"):
+                if key in ident:
+                    v = ident[key]
+                    if not _is_int(v) or not 0 <= v <= 0xFFFF:
+                        raise ProfileError(
+                            f"{path}: identity.{key} must be an integer in "
+                            "0..0xffff (TOML hex like 0x346e is fine)")
+                    if key == "vendor":
+                        identity_vendor = v
+                    else:
+                        identity_product = v
+        else:
+            raise ProfileError(
+                f"{path}: identity must be \"real\" or an [identity] table")
+
     axes = _parse_axes(path, data["axes"]) if "axes" in data else {}
 
     env: dict[str, str] = {}
@@ -262,6 +305,8 @@ def _parse_profile_file(path: str) -> Profile:
     stem = os.path.splitext(os.path.basename(path))[0]
     return Profile(name=stem, mode=mode, buttons=buttons, ffb_gain=ffb_gain,
                    ffb_autocenter=ffb_autocenter, ffb_drop=ffb_drop,
+                   identity_real=identity_real, identity_name=identity_name,
+                   identity_vendor=identity_vendor, identity_product=identity_product,
                    axes=axes, env=env, steam_input=steam_input,
                    hook_pre=hook_pre, hook_post=hook_post, notes=notes,
                    path=path)
@@ -375,6 +420,15 @@ def daemon_args(profile: Profile,
     argv = ["--mode", mode]
     if mode in ("A", "C") and profile.buttons is not None:
         argv += ["--buttons", str(profile.buttons)]
+    if profile.identity_real:
+        argv += ["--identity-real"]
+    else:
+        if profile.identity_name is not None:
+            argv += ["--name", profile.identity_name]
+        if profile.identity_vendor is not None:
+            argv += ["--vendor", f"0x{profile.identity_vendor:04x}"]
+        if profile.identity_product is not None:
+            argv += ["--product", f"0x{profile.identity_product:04x}"]
     if profile.ffb_gain != 100:
         argv += ["--ffb-gain", str(profile.ffb_gain)]
     if profile.ffb_autocenter is not None:
@@ -446,8 +500,21 @@ def emit_profile_toml(profile: Profile) -> str:
         lines.append(f"ffb_autocenter = {profile.ffb_autocenter}")
     if profile.ffb_drop:
         lines.append(f"ffb_drop = {_toml_scalar(profile.ffb_drop)}")
+    if profile.identity_real:
+        lines.append('identity = "real"')
     if profile.notes:
         lines.append(f"notes = {_toml_scalar(profile.notes)}")
+
+    ident_lines = []
+    if not profile.identity_real:
+        if profile.identity_name is not None:
+            ident_lines.append(f"name = {_toml_scalar(profile.identity_name)}")
+        if profile.identity_vendor is not None:
+            ident_lines.append(f"vendor = 0x{profile.identity_vendor:04x}")
+        if profile.identity_product is not None:
+            ident_lines.append(f"product = 0x{profile.identity_product:04x}")
+    if ident_lines:
+        lines += ["", "[identity]"] + ident_lines
 
     axis_lines = []
     for axis in _AXIS_NAMES:

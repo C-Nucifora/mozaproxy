@@ -94,7 +94,12 @@ Then launch Forza with the wheel connected. Plain launch options are enough:
 PROTON_DLSS_UPGRADE=1 ENABLE_HDR_WSI=1 PROTON_ENABLE_WAYLAND=1 PROTON_ENABLE_HDR=1 %command%
 ```
 
-In the game, bind to the **"MOZA R25 (mozaproxy)"** device.
+In the game, bind to the virtual wheel. With the `fh5` profile it carries the
+**real base's name** (e.g. "Gudsen MOZA R25 Ultra Base") because FH5 matches
+wheels against a supported-hardware list by USB identity — the profile sets
+`identity = "real"`, cloning the base's name/ids onto the slim virtual face
+(the same trick MOZA's Windows "Forza compatibility mode" firmware plays).
+Other profiles show **"MOZA R25 (mozaproxy)"**.
 
 ## Modes (per-game faces)
 
@@ -152,6 +157,8 @@ Shipped seeds: `fh5`, `ac`, `acc`, `fs22`, `fs25` (Mode A), `normalized`
 # ~/.config/mozaproxy/profiles/mygame.toml   (scaffold one: mozactl new mygame)
 mode = "C"                    # A|B|C|D — triage a broken game: A, then C, then B
 buttons = 24
+identity = "real"             # clone the real base's USB identity (wheel whitelists)
+                              # …or an explicit [identity] table with name/vendor/product
 ffb_gain = 80                 # clamp relayed FFB gain to 80%
 ffb_autocenter = 0            # seed autocenter (0 = force off) on attach
 ffb_drop = ["spring", "damper"]   # hide effect types the game's backend faults on

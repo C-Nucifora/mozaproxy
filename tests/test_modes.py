@@ -38,7 +38,33 @@ class TestWheelMode:
         spec = mode.build_spec(real_caps)
         keys = spec.events[ecodes.EV_KEY]
         assert len(keys) == 24
-        assert keys == [ecodes.BTN_JOYSTICK + i for i in range(24)]
+        # The first 24 of the base's OWN codes: the 16-button 0x120 block plus
+        # the first 8 of the upper 0x270 block — NOT a synthetic contiguous run.
+        assert keys == list(range(0x120, 0x130)) + list(range(0x270, 0x278))
+
+    def test_build_spec_exposes_all_real_buttons_when_uncapped(self, real_caps):
+        mode = WheelMode(buttons=128)
+        spec = mode.build_spec(real_caps)
+        # Every real button code is exposed, none invented, none from the
+        # 0x130 gamepad block the hardware skips.
+        assert spec.events[ecodes.EV_KEY] == sorted(real_caps.keys)
+        assert all(0x130 <= c <= 0x13f for c in spec.events[ecodes.EV_KEY]) is False
+
+    def test_map_input_upper_block_button_passes_when_exposed(self, real_caps):
+        # A paddle/wheel button in the upper 0x270 block must pass through once
+        # exposed — the exact regression that broke JDM's paddles/clutch.
+        mode = WheelMode(buttons=128)
+        mode.build_spec(real_caps)
+        code = 0x275
+        assert list(mode.map_input(ecodes.EV_KEY, code, 1)) == [
+            (ecodes.EV_KEY, code, 1)
+        ]
+
+    def test_map_input_upper_block_button_dropped_when_capped(self, real_caps):
+        mode = WheelMode(buttons=24)
+        mode.build_spec(real_caps)
+        # 0x2df is a real button but beyond the 24-cap, so it is dropped.
+        assert list(mode.map_input(ecodes.EV_KEY, 0x2DF, 1)) == []
 
     def test_build_spec_ff_and_ids(self, real_caps):
         mode = WheelMode()

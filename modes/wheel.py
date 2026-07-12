@@ -47,13 +47,25 @@ class WheelMode(Mode):
         # used by map_input to drop real buttons above our advertised count.
         self.button_set: set[int] = set()
 
+    def _button_codes(self, real: RealCaps) -> list[int]:
+        """The real device's own button codes, sorted, capped to self.buttons.
+
+        WHY not a synthetic BTN_JOYSTICK+i block: the MOZA base does NOT number
+        its buttons contiguously from 0x120. It uses 0x120..0x12f (16) then
+        jumps to 0x270..0x2df (112) — deliberately skipping the 0x130 gamepad
+        block so it reads as a wheel, not a pad. A synthetic contiguous range
+        therefore misses every button in the upper block (paddles, clutch,
+        wheel buttons) and invents phantom codes the device never sends.
+        Passing the real codes through preserves the exact button set (and the
+        pad-block gap) the hardware advertises.
+        """
+        return sorted(real.keys)[:self.buttons]
+
     def build_spec(self, real: RealCaps) -> VirtualSpec:
         """Describe a virtual device that mirrors the real axes 1:1."""
         # Mirror every real ABS axis verbatim (same AbsInfo objects/ranges).
         abs_caps = [(code, info) for code, info in real.abs.items()]
-        # Expose the first N buttons contiguously from BTN_JOYSTICK; the real
-        # base numbers its buttons from 0x120 upward, so this maps 1:1.
-        button_codes = [ecodes.BTN_JOYSTICK + i for i in range(self.buttons)]
+        button_codes = self._button_codes(real)
         self.button_set = set(button_codes)
 
         events: dict = {
@@ -132,8 +144,8 @@ class NormalizedMode(WheelMode):
                 self.src_ranges[code] = (info.min, info.max)
                 abs_caps.append((code, target))
 
-        # Reuse WheelMode's button + FF logic by building the same button block.
-        button_codes = [ecodes.BTN_JOYSTICK + i for i in range(self.buttons)]
+        # Reuse WheelMode's real-button selection (see _button_codes).
+        button_codes = self._button_codes(real)
         self.button_set = set(button_codes)
 
         events: dict = {

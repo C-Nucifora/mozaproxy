@@ -19,9 +19,11 @@
 # binding stored the broken values). Bind steering + pedals fresh.
 name = "jdm"
 mode = "C"
-buttons = 24
+# Expose all of the base's buttons (paddles/clutch/wheel buttons live in the
+# upper 0x270.. block; a low cap drops them). JDM handles a full button set.
+buttons = 128
 axis_range = [0, 32767]
-notes = "Unrecognised MOZA id (no JDM preset) + sign-safe 0..32767 axes -> custom-bind in-game. If FFB dies, try identity product 0x0002 (R9) instead."
+notes = "Unrecognised MOZA id (no JDM preset) + sign-safe 0..32767 axes + all buttons -> custom-bind in-game. If FFB dies, try identity product 0x0002 (R9) instead."
 
 [identity]
 name = "MOZA Wheelbase (mozaproxy)"

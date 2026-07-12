@@ -37,8 +37,11 @@ def make_real_caps() -> RealCaps:
     abs_caps[ecodes.ABS_HAT0X] = _abs(-1, 1)
     abs_caps[ecodes.ABS_HAT0Y] = _abs(-1, 1)
 
-    # 128 contiguous buttons from BTN_JOYSTICK (0x120).
-    keys = [ecodes.BTN_JOYSTICK + i for i in range(128)]
+    # 128 buttons as the REAL MOZA R25 Ultra base reports them: a 16-button
+    # block at 0x120..0x12f, then 112 buttons at 0x270..0x2df (the
+    # BTN_TRIGGER_HAPPY region) — deliberately skipping the 0x130 gamepad
+    # block so the device reads as a wheel. NOT contiguous from BTN_JOYSTICK.
+    keys = list(range(0x120, 0x130)) + list(range(0x270, 0x2E0))
 
     ff = [ecodes.FF_CONSTANT, ecodes.FF_PERIODIC, ecodes.FF_SPRING, ecodes.FF_DAMPER]
 

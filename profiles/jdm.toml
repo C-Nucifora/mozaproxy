@@ -2,12 +2,15 @@
 #
 # JDM officially supports MOZA R5 and R9, so we present the same R9 identity
 # that unlocked FH5 (a supported id that provably enumerates cleanly under
-# Proton). Its FFB shipped rough and was overhauled in the Physics 2.0 update —
-# tune in-game FFB settings first, then ffb_gain here if it stays light.
+# Proton). Mode C, not A: JDM reads the base's UNSIGNED 0..65535 steering axis
+# as signed — right of center worked, left of center wrapped to pegged-left —
+# so the normalized face presents every axis on one signed range. Its FFB
+# shipped rough and was overhauled in the Physics 2.0 update — tune in-game
+# FFB settings first, then ffb_gain here if it stays light.
 name = "jdm"
-mode = "A"
+mode = "C"
 buttons = 24
-notes = "Presents as MOZA R9 (on JDM's supported-wheel list). Tune in-game FFB first; raise ffb_gain here if it stays light."
+notes = "MOZA R9 identity + normalized axes (JDM misreads unsigned steering as signed). Tune in-game FFB first; raise ffb_gain if light."
 
 [identity]
 name = "MOZA R9 Base"

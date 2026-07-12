@@ -39,6 +39,9 @@ PIDFILE = os.path.join(
 STATEFILE = os.path.join(
     os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "mozaproxy.state.json"
 )
+LOGFILE = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "mozaproxy.log"
+)
 
 MOZA_VENDOR = 0x346E
 REAL_PRODUCT = 0x0000
@@ -206,13 +209,25 @@ def _terminate_daemon(wait: float = 0.0) -> list[int]:
 
 
 def _spawn_daemon(argv_tail: list[str]) -> int | None:
-    """Start mozaproxy.py with argv_tail; return its pid, or None on failure."""
+    """Start mozaproxy.py with argv_tail; return its pid, or None on failure.
+
+    The daemon's output goes to LOGFILE, not our stdout: inheriting a pipe
+    (Steam's launch-option capture, a shell pipeline) would tie the daemon's
+    lifetime to it and lose the logs; `mozactl logs` reads the file instead.
+    """
     present, _, _ = usb_present()
     if not present:
         print(_c("31", "Base not on USB — power the wheelbase on first."))
         return None
     py = VENV_PY if os.path.exists(VENV_PY) else sys.executable
-    proc = subprocess.Popen([py, DAEMON] + list(argv_tail), start_new_session=True)
+    try:
+        logf = open(LOGFILE, "w")
+    except OSError:
+        logf = subprocess.DEVNULL
+    proc = subprocess.Popen([py, DAEMON] + list(argv_tail), start_new_session=True,
+                            stdout=logf, stderr=subprocess.STDOUT)
+    if logf is not subprocess.DEVNULL:
+        logf.close()  # the child holds its own copy of the fd
     try:
         with open(PIDFILE, "w") as f:
             f.write(str(proc.pid))
@@ -458,7 +473,7 @@ def cmd_run(args) -> int:
     game_cmd = list(args.game_cmd)
     # argparse's REMAINDER swallows our own flags when they follow PROFILE;
     # hoist them back out. Anything after the '--' separator is the game's.
-    while game_cmd and game_cmd[0] in ("--stop-after", "--require-wheel"):
+    while game_cmd and game_cmd[0] in ("--stop-after", "--require-wheel", "--debug"):
         setattr(args, game_cmd.pop(0).lstrip("-").replace("-", "_"), True)
     if game_cmd and game_cmd[0] == "--":
         del game_cmd[0]
@@ -509,12 +524,18 @@ def cmd_run(args) -> int:
             print(_c("33", "Re-run 'mozactl calibrate' to rewrite it."))
             calib = {}
         desired = profiledb.daemon_args(profile, calib)
+        if args.debug:
+            # Part of the argv on purpose: toggling debug on/off changes the
+            # desired argv, so the daemon restarts into/out of FFB tracing.
+            desired = desired + ["-v"]
         if profiledb.needs_restart(_read_state(), desired, daemon_pids()):
             _terminate_daemon(wait=3.0)
             print(f"Starting mode {profile.mode} for profile '{profile.name}' ...")
             pid = _spawn_daemon(desired)
             if pid is not None:
                 _write_state(pid, profile.mode, desired, profile.name)
+                if args.debug:
+                    print(f"FFB tracing on — read it with: mozactl logs  ({LOGFILE})")
             elif args.require_wheel:
                 return 1
             else:
@@ -554,6 +575,19 @@ def cmd_run(args) -> int:
             _clear_state()
         return rc
     return _exec_game(game_cmd, env)
+
+
+def cmd_logs(args) -> int:
+    try:
+        with open(LOGFILE) as f:
+            lines = f.readlines()
+    except OSError:
+        print(f"No daemon log at {LOGFILE} — the daemon has not been started "
+              "by mozactl since boot.")
+        return 1
+    for ln in lines[-args.lines:]:
+        print(ln, end="")
+    return 0
 
 
 def cmd_new(args) -> int:
@@ -641,6 +675,9 @@ def main(argv=None) -> int:
                         "(default: exec the game so Steam tracks it)")
     r.add_argument("--require-wheel", action="store_true",
                    help="refuse to launch the game if the daemon cannot start")
+    r.add_argument("--debug", action="store_true",
+                   help="run the daemon with -v (traces every FFB upload/play "
+                        "to the log; read with 'mozactl logs')")
     r.add_argument("game_cmd", nargs=argparse.REMAINDER, metavar="-- CMD",
                    help="game command to launch; in Steam: -- %%command%%")
     r.set_defaults(fn=cmd_run)
@@ -654,6 +691,10 @@ def main(argv=None) -> int:
     n.add_argument("--force", action="store_true",
                    help="overwrite an existing user profile of the same name")
     n.set_defaults(fn=cmd_new)
+    lg = sub.add_parser("logs", help="show the daemon's log (FFB traces with --debug)")
+    lg.add_argument("-n", "--lines", type=int, default=50,
+                    help="how many trailing lines to show (default 50)")
+    lg.set_defaults(fn=cmd_logs)
     sub.add_parser("calibrate",
                    help="interactively map wheel/pedal axes (writes calibration.toml)"
                    ).set_defaults(fn=cmd_calibrate)

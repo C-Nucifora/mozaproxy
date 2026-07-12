@@ -48,6 +48,7 @@ def _wheel_overrides(buttons, name, vendor, product) -> dict:
 def get_mode(key: str, *, buttons: int | None = None, name: str | None = None,
              vendor: int | None = None, product: int | None = None,
              steer_deadzone: float = 0.0,
+             axis_range: tuple[int, int] | None = None,
              steer_src: int | None = None, throttle_src: int | None = None,
              brake_src: int | None = None, clutch_src: int | None = None,
              steer_invert: bool = False, throttle_invert: bool = False,
@@ -64,8 +65,12 @@ def get_mode(key: str, *, buttons: int | None = None, name: str | None = None,
     if k in ("a", "wheel"):
         return WheelMode(**_wheel_overrides(buttons, name, vendor, product))
     if k in ("c", "normalized", "norm"):
-        return NormalizedMode(steer_deadzone=steer_deadzone or 0.0,
-                              **_wheel_overrides(buttons, name, vendor, product))
+        co: dict = _wheel_overrides(buttons, name, vendor, product)
+        if axis_range is not None:
+            # Uniform target range for all non-hat axes; (0, 32767) dodges
+            # sign-handling bugs in picky HID stacks (see NormalizedMode).
+            co["axis_range"] = axis_range
+        return NormalizedMode(steer_deadzone=steer_deadzone or 0.0, **co)
     if k in ("b", "gamepad", "xinput", "pad"):
         # Gamepad has its own XInput ids; only name/vendor/product overrides apply.
         go: dict = {}

@@ -844,3 +844,38 @@ class TestFfbGainBoost:
         import mozaproxy
         args = mozaproxy.parse_args(["--ffb-gain", "150"])
         assert args.ffb_gain == 150
+
+
+class TestAxisRangeSchema:
+    def test_axis_range_parsed_and_rendered(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "C"\naxis_range = [0, 32767]\n')
+        prof = load_profile(p)
+        assert prof.axis_range == (0, 32767)
+        assert daemon_args(prof, {}) == ["--mode", "C", "--axis-range", "0:32767"]
+
+    def test_axis_range_only_rendered_for_mode_c(self, dirs):
+        prof = Profile(name="g", mode="A", axis_range=(0, 32767))
+        assert daemon_args(prof, {}) == ["--mode", "A"]
+
+    @pytest.mark.parametrize("bad", ["[1]", "[2, 1]", "[0, 70000]",
+                                     '["0", "1"]', "[0, 1, 2]", '"0:1"'])
+    def test_axis_range_validated(self, dirs, bad):
+        user, _ = dirs
+        p = write(user, "g", f'mode = "C"\naxis_range = {bad}\n')
+        with pytest.raises(ProfileError, match="axis_range"):
+            load_profile(p)
+
+    def test_axis_range_emit_round_trip(self, dirs):
+        user, _ = dirs
+        prof = Profile(name="g", mode="C", axis_range=(0, 32767))
+        p = write(user, "g", emit_profile_toml(prof))
+        assert load_profile(p).axis_range == (0, 32767)
+
+    def test_jdm_seed_uses_sign_safe_range(self):
+        p = load_profile("jdm")
+        assert p.mode == "C"
+        assert p.axis_range == (0, 32767)
+        assert p.identity_product == 0x0002
+        args = daemon_args(p, {})
+        assert "--axis-range" in args and "0:32767" in args

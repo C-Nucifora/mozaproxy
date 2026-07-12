@@ -529,3 +529,56 @@ class TestUsbBacked:
         from mozaproxy import usb_backed
         assert usb_backed("") is False
         assert usb_backed(None) is False
+
+
+class TestNormalizedAxisRange:
+    """Mode C axis_range override (sign-safe ranges for picky HID stacks)."""
+
+    def test_default_stays_signed16(self, real_caps):
+        mode = NormalizedMode()
+        spec = mode.build_spec(real_caps)
+        ax = dict(spec.events[ecodes.EV_ABS])[ecodes.ABS_X]
+        assert (ax.min, ax.max) == (-32768, 32767)
+
+    def test_custom_range_advertised_on_all_non_hat_axes(self, real_caps):
+        mode = NormalizedMode(axis_range=(0, 32767))
+        spec = mode.build_spec(real_caps)
+        for code, info in spec.events[ecodes.EV_ABS]:
+            if code in (ecodes.ABS_HAT0X, ecodes.ABS_HAT0Y):
+                assert (info.min, info.max) == (-1, 1)
+            else:
+                assert (info.min, info.max) == (0, 32767)
+
+    def test_values_rescaled_into_range(self, real_caps):
+        mode = NormalizedMode(axis_range=(0, 32767))
+        mode.build_spec(real_caps)
+        # Steering: unsigned 0..65535 source.
+        assert list(mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 0)) == \
+            [(ecodes.EV_ABS, ecodes.ABS_X, 0)]
+        assert list(mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 65535)) == \
+            [(ecodes.EV_ABS, ecodes.ABS_X, 32767)]
+        assert list(mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 32768)) == \
+            [(ecodes.EV_ABS, ecodes.ABS_X, 16384)]
+        # Pedal: signed source, rest at min -> 0.
+        assert list(mode.map_input(ecodes.EV_ABS, ecodes.ABS_Z, -32768)) == \
+            [(ecodes.EV_ABS, ecodes.ABS_Z, 0)]
+        assert list(mode.map_input(ecodes.EV_ABS, ecodes.ABS_Z, 32767)) == \
+            [(ecodes.EV_ABS, ecodes.ABS_Z, 32767)]
+
+    def test_get_mode_wires_axis_range(self, real_caps):
+        mode = get_mode("C", axis_range=(0, 32767))
+        assert mode.axis_range == (0, 32767)
+        # Unset keeps the mode default.
+        assert get_mode("C").axis_range == (-32768, 32767)
+
+    def test_axis_range_converter(self):
+        import argparse
+        import pytest
+        from mozaproxy import _axis_range, parse_args
+        assert _axis_range("0:32767") == (0, 32767)
+        assert _axis_range("-32768:32767") == (-32768, 32767)
+        for bad in ("32767:0", "0:70000", "abc", "5"):
+            with pytest.raises(argparse.ArgumentTypeError):
+                _axis_range(bad)
+        assert parse_args(["--axis-range", "0:32767"]).axis_range == (0, 32767)
+        assert parse_args([]).axis_range is None

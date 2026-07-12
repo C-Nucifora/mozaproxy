@@ -477,6 +477,19 @@ def _gain_percent(s: str):
     return v
 
 
+def _axis_range(s: str):
+    """argparse converter: 'LO:HI' target range for mode C axes."""
+    try:
+        lo_s, hi_s = s.split(":", 1)
+        lo, hi = int(lo_s, 0), int(hi_s, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{s!r} is not LO:HI (e.g. 0:32767)")
+    if not (-32768 <= lo < hi <= 65535):
+        raise argparse.ArgumentTypeError(
+            f"axis range must satisfy -32768 <= LO < HI <= 65535, got {s!r}")
+    return (lo, hi)
+
+
 def _ff_drop(s: str):
     """argparse converter: comma list of FF effect-type names -> frozenset of codes."""
     codes = set()
@@ -499,6 +512,10 @@ def parse_args(argv=None):
     p.add_argument("--deadzone", type=float, default=0.0,
                    help="deadzone fraction 0..1 applied to steering in modes B "
                         "and C (default 0)")
+    p.add_argument("--axis-range", type=_axis_range, default=None,
+                   help="mode C: present all non-hat axes on this LO:HI range "
+                        "(default -32768:32767; use 0:32767 for HID stacks that "
+                        "misread signed or 16-bit-unsigned axes)")
     p.add_argument("--ffb-gain", type=_gain_percent, default=100,
                    help="force-feedback strength percent 0..200: below 100 "
                         "clamps the game's gain, above 100 boosts effect drive "
@@ -562,6 +579,7 @@ def main(argv=None) -> int:
             buttons=args.buttons, name=args.name,
             vendor=args.vendor, product=args.product,
             steer_deadzone=args.deadzone,
+            axis_range=args.axis_range,
             steer_src=args.steer_src, throttle_src=args.throttle_src,
             brake_src=args.brake_src, clutch_src=args.clutch_src,
             steer_invert=args.steer_invert, throttle_invert=args.throttle_invert,

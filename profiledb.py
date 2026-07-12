@@ -73,6 +73,9 @@ class Profile:
     identity_name: str | None = None
     identity_vendor: int | None = None    # 0..0xFFFF (0 is real: MOZA base is 346e:0000)
     identity_product: int | None = None
+    # Mode C target range for all non-hat axes; None = mode default (signed16).
+    # [0, 32767] dodges HID sign-handling bugs (UE RawInput under Proton).
+    axis_range: tuple[int, int] | None = None
     axes: dict[str, AxisOverride] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)
     steam_input: str = "default"   # "off" | "default"
@@ -110,7 +113,8 @@ def canon_mode(s: str) -> str:
 # name the file and the key.
 # ---------------------------------------------------------------------------
 _TOP_KEYS = frozenset({"name", "mode", "buttons", "ffb_gain", "ffb_autocenter",
-                       "ffb_drop", "identity", "notes", "axes", "proton", "hooks"})
+                       "ffb_drop", "identity", "axis_range", "notes", "axes",
+                       "proton", "hooks"})
 _IDENTITY_KEYS = frozenset({"name", "vendor", "product"})
 _AXIS_NAMES = ("steering", "throttle", "brake", "clutch")
 _AXIS_KEYS = frozenset({"source", "invert", "deadzone", "range"})
@@ -288,6 +292,17 @@ def _parse_profile_file(path: str) -> Profile:
                 raise ProfileError(
                     f"{path}: proton.steam_input must be 'off' or 'default'")
 
+    axis_range: tuple[int, int] | None = None
+    if "axis_range" in data:
+        rng = data["axis_range"]
+        if (not isinstance(rng, list) or len(rng) != 2
+                or not all(_is_int(v) for v in rng)
+                or not -32768 <= rng[0] < rng[1] <= 65535):
+            raise ProfileError(
+                f"{path}: 'axis_range' must be [LO, HI] ints with "
+                "-32768 <= LO < HI <= 65535 (e.g. [0, 32767])")
+        axis_range = (rng[0], rng[1])
+
     hook_pre = hook_post = ""
     if "hooks" in data:
         hooks = data["hooks"]
@@ -308,6 +323,7 @@ def _parse_profile_file(path: str) -> Profile:
                    ffb_autocenter=ffb_autocenter, ffb_drop=ffb_drop,
                    identity_real=identity_real, identity_name=identity_name,
                    identity_vendor=identity_vendor, identity_product=identity_product,
+                   axis_range=axis_range,
                    axes=axes, env=env, steam_input=steam_input,
                    hook_pre=hook_pre, hook_post=hook_post, notes=notes,
                    path=path)
@@ -442,6 +458,8 @@ def daemon_args(profile: Profile,
         if steering is not None and steering.deadzone is not None \
                 and steering.deadzone > 0:
             argv += ["--deadzone", str(steering.deadzone)]
+    if mode == "C" and profile.axis_range is not None:
+        argv += ["--axis-range", f"{profile.axis_range[0]}:{profile.axis_range[1]}"]
     if mode == "B":
         for axis, flag in _AXIS_FLAGS:
             ov = merged.get(axis)
@@ -503,6 +521,8 @@ def emit_profile_toml(profile: Profile) -> str:
         lines.append(f"ffb_drop = {_toml_scalar(profile.ffb_drop)}")
     if profile.identity_real:
         lines.append('identity = "real"')
+    if profile.axis_range is not None:
+        lines.append(f"axis_range = [{profile.axis_range[0]}, {profile.axis_range[1]}]")
     if profile.notes:
         lines.append(f"notes = {_toml_scalar(profile.notes)}")
 

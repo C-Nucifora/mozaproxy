@@ -2,15 +2,19 @@
 #
 # JDM officially supports MOZA R5 and R9, so we present the same R9 identity
 # that unlocked FH5 (a supported id that provably enumerates cleanly under
-# Proton). Mode C, not A: JDM reads the base's UNSIGNED 0..65535 steering axis
-# as signed — right of center worked, left of center wrapped to pegged-left —
-# so the normalized face presents every axis on one signed range. Its FFB
-# shipped rough and was overhauled in the Physics 2.0 update — tune in-game
-# FFB settings first, then ffb_gain here if it stays light.
+# Proton). Mode C with axis_range [0, 32767]: JDM (Unreal) reads axes through
+# a HID path that saturates on BOTH signed (-32768 min) and 16-bit-unsigned
+# (65535 max) ranges — custom-bound axes read only 0%/100%. A positive 15-bit
+# range never sets the sign bit, so signed and unsigned parsers agree on every
+# value. Re-do the in-game custom binding after any range change (JDM stores
+# per-device scaling from the binding session). Its FFB shipped rough and was
+# overhauled in the Physics 2.0 update — tune in-game FFB settings first, then
+# ffb_gain here if it stays light.
 name = "jdm"
 mode = "C"
 buttons = 24
-notes = "MOZA R9 identity + normalized axes (JDM misreads unsigned steering as signed). Tune in-game FFB first; raise ffb_gain if light."
+axis_range = [0, 32767]
+notes = "MOZA R9 identity + sign-safe 0..32767 axes (JDM saturates signed/unsigned-16 ranges). Re-do in-game custom binding after changes."
 
 [identity]
 name = "MOZA R9 Base"

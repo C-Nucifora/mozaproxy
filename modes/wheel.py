@@ -101,15 +101,25 @@ class NormalizedMode(WheelMode):
     def __init__(self, buttons: int = 24,
                  name: str = "MOZA R25 (mozaproxy)",
                  vendor: int = 0x346E, product: int = 0x0002,
-                 steer_deadzone: float = 0.0) -> None:
+                 steer_deadzone: float = 0.0,
+                 axis_range: tuple[int, int] = (-32768, 32767)) -> None:
         super().__init__(buttons=buttons, name=name, vendor=vendor, product=product)
         self.steer_deadzone = steer_deadzone
+        # The uniform target range every non-hat axis is presented on. The
+        # SIGNED16 default suits most backends, but ranges with a negative
+        # minimum trip sign-handling bugs in some HID stacks (UE RawInput under
+        # Proton reads them as pegged min-or-max). axis_range=(0, 32767) is the
+        # bulletproof alternative: the top bit is never set, so signed and
+        # unsigned parsers read identical values.
+        self.axis_range = axis_range
         # ABS code -> (src_min, src_max) captured from the real device, so
-        # map_input can rescale each incoming value onto SIGNED16.
+        # map_input can rescale each incoming value onto axis_range.
         self.src_ranges: dict[int, tuple[int, int]] = {}
 
     def build_spec(self, real: RealCaps) -> VirtualSpec:
-        """Like WheelMode, but re-type every non-hat axis as SIGNED16."""
+        """Like WheelMode, but re-type every non-hat axis onto axis_range."""
+        lo, hi = self.axis_range
+        target = AbsInfo(value=0, min=lo, max=hi, fuzz=0, flat=0, resolution=0)
         abs_caps: list[tuple[int, AbsInfo]] = []
         self.src_ranges = {}
         for code, info in real.abs.items():
@@ -118,9 +128,9 @@ class NormalizedMode(WheelMode):
                 abs_caps.append((code, info))
             else:
                 # Capture the real source range for rescaling, and advertise a
-                # uniform signed range to the game.
+                # uniform target range to the game.
                 self.src_ranges[code] = (info.min, info.max)
-                abs_caps.append((code, SIGNED16))
+                abs_caps.append((code, target))
 
         # Reuse WheelMode's button + FF logic by building the same button block.
         button_codes = [ecodes.BTN_JOYSTICK + i for i in range(self.buttons)]
@@ -142,17 +152,18 @@ class NormalizedMode(WheelMode):
         )
 
     def map_input(self, etype: int, code: int, value: int) -> Iterable[tuple[int, int, int]]:
-        """Rescale non-hat axes onto SIGNED16; defer everything else to WheelMode."""
+        """Rescale non-hat axes onto axis_range; defer everything else to WheelMode."""
         if etype == ecodes.EV_ABS and code not in _HAT_AXES:
             src = self.src_ranges.get(code)
             if src is None:
                 # No captured range (shouldn't happen): pass through unchanged.
                 return [(etype, code, value)]
             smin, smax = src
+            lo, hi = self.axis_range
             # Only the steering axis gets a (centered) deadzone; pedals/triggers
             # keep their raw curve.
             dz = self.steer_deadzone if code == ecodes.ABS_X else 0.0
-            return [(etype, code, rescale(value, smin, smax, -32768, 32767, deadzone=dz))]
+            return [(etype, code, rescale(value, smin, smax, lo, hi, deadzone=dz))]
         # Hat axes and buttons are handled exactly as WheelMode does.
         return super().map_input(etype, code, value)
 

@@ -1,0 +1,19 @@
+# JDM: Japanese Drift Master.
+#
+# JDM officially supports MOZA R5 and R9, so we present the same R9 identity
+# that unlocked FH5 (a supported id that provably enumerates cleanly under
+# Proton). Its FFB shipped rough and was overhauled in the Physics 2.0 update —
+# tune in-game FFB settings first, then ffb_gain here if it stays light.
+name = "jdm"
+mode = "A"
+buttons = 24
+notes = "Presents as MOZA R9 (on JDM's supported-wheel list). Tune in-game FFB first; raise ffb_gain here if it stays light."
+
+[identity]
+name = "MOZA R9 Base"
+vendor = 0x346e
+product = 0x0002
+
+[proton]
+env = { PROTON_ENABLE_WAYLAND = "1" }
+steam_input = "off"

@@ -531,7 +531,7 @@ class TestNeedsRestart:
 # ---------------------------------------------------------------------------
 # Shipped seed profiles (reads the real profiles/ directory)
 # ---------------------------------------------------------------------------
-SEED_NAMES = {"ac", "acc", "arcade", "fh5", "fs22", "fs25", "normalized"}
+SEED_NAMES = {"ac", "acc", "arcade", "fh5", "fs22", "fs25", "jdm", "normalized"}
 
 
 class TestSeedProfiles:

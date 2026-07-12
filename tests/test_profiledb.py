@@ -559,10 +559,16 @@ class TestSeedProfiles:
         assert p.buttons == 24
         assert p.env == {"PROTON_ENABLE_WAYLAND": "1"}
         assert p.steam_input == "off"
-        # FH5 matches wheels by USB identity, so the seed clones the real base.
-        assert p.identity_real is True
-        assert daemon_args(p, {}) == ["--mode", "A", "--buttons", "24",
-                                      "--identity-real"]
+        # FH5 matches wheels by USB identity — but the base's own id 346e:0000
+        # crashes it under Proton, so the seed presents as a MOZA R9 instead
+        # (an FH5-supported id that provably launches).
+        assert p.identity_real is False
+        assert p.identity_product == 0x0002
+        assert daemon_args(p, {}) == [
+            "--mode", "A", "--buttons", "24",
+            "--name", "MOZA R9 Base",
+            "--vendor", "0x346e", "--product", "0x0002",
+        ]
 
     def test_arcade(self):
         p = load_profile("arcade")

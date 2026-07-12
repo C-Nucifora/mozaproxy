@@ -1,15 +1,22 @@
 # Forza Horizon 5 — the title this project was built for (SPEC section 7).
 #
-# identity = "real": FH5 matches wheels against a supported-hardware list by
-# USB name/vendor/product; an invented identity gets "this wheel profile is
-# incompatible with your current wheel". Cloning the real base's identity onto
-# the slim 24-button face is exactly what MOZA's Windows "Forza compatibility
-# mode" firmware does.
+# Identity findings on this system (Proton), same slim 24-button face in all
+# cases — FH5 keys its behavior off the USB identity:
+#   346e:0000 (R16/R21/R25 id, real or cloned)  -> crashes at launch
+#   346e:0002 name "MOZA R25 (mozaproxy)"       -> launches, wheel not accepted
+# So we present MOZA R9 (346e:0002 IS the R9's real product id per the
+# hid-universal-pidff device table) with the R9's real product name, an
+# FH5-supported wheel. Do NOT switch to identity = "real": the base's own id
+# 346e:0000 is what triggers the crash.
 name = "fh5"
 mode = "A"
 buttons = 24
-identity = "real"
-notes = "Slim wheel face with the real base's identity (FH5 wheel whitelist). Verify in-game FFB."
+notes = "Slim wheel face presenting as MOZA R9 (FH5-supported id that doesn't crash it)."
+
+[identity]
+name = "MOZA R9 Base"
+vendor = 0x346e
+product = 0x0002
 
 [proton]
 env = { PROTON_ENABLE_WAYLAND = "1" }

@@ -40,7 +40,8 @@ import evdev
 from evdev import AbsInfo, InputDevice, UInput, ecodes, ff
 
 from modes import get_mode
-from modes.base import FF_EFFECT_TYPES, RealCaps, canon_ff_type, scale_gain, strip_ff
+from modes.base import (FF_EFFECT_TYPES, RealCaps, boost_effect, canon_ff_type,
+                        scale_gain, strip_ff)
 
 log = logging.getLogger("mozaproxy")
 
@@ -113,17 +114,25 @@ def describe_effect(e: ff.Effect) -> str:
             pass
         try:
             if e.type == ecodes.FF_CONSTANT:
-                parts.append(f"level={e.u.constant.level}")
+                parts.append(f"level={e.u.ff_constant_effect.level}")
             elif e.type == ecodes.FF_PERIODIC:
-                p = e.u.periodic
+                p = e.u.ff_periodic_effect
                 parts.append(f"mag={p.magnitude} period={p.period} offset={p.offset}")
             elif e.type in (ecodes.FF_SPRING, ecodes.FF_DAMPER, ecodes.FF_FRICTION,
                             ecodes.FF_INERTIA):
-                c = e.u.condition[0]
+                c = e.u.ff_condition_effect
+                try:
+                    c = c[0]        # kernel struct is condition[2]; take axis 0
+                except TypeError:
+                    pass
                 parts.append(f"satL={c.left_saturation} satR={c.right_saturation} "
                              f"coefL={c.left_coeff} coefR={c.right_coeff} center={c.center}")
             elif e.type == ecodes.FF_RAMP:
-                parts.append(f"start={e.u.ramp.start_level} end={e.u.ramp.end_level}")
+                parts.append(f"start={e.u.ff_ramp_effect.start_level} "
+                             f"end={e.u.ff_ramp_effect.end_level}")
+            elif e.type == ecodes.FF_RUMBLE:
+                r = e.u.ff_rumble_effect
+                parts.append(f"strong={r.strong_magnitude} weak={r.weak_magnitude}")
         except Exception:
             pass
         return " ".join(parts)
@@ -287,6 +296,11 @@ class Proxy:
                     upload.retval = -errno.EINVAL
                     return
                 real_effect = clone_effect(translated)
+                if self.ffb_gain > 100:
+                    # Boost drive levels on OUR copy only (the game's upload
+                    # struct stays untouched). FF_GAIN cannot amplify past the
+                    # game's own max, so >100 rewrites the effects themselves.
+                    boost_effect(real_effect, self.ffb_gain)
                 # Re-use the previously mapped real id if the game is updating an
                 # existing effect, otherwise ask the kernel for a fresh one.
                 real_effect.id = self.effect_map.get(vid, -1)
@@ -451,13 +465,15 @@ def _abs_code(s: str):
 
 
 def _gain_percent(s: str):
-    """argparse converter: an FFB percentage (gain/autocenter), 0..100."""
+    """argparse converter: an FFB percentage. Gain accepts 0..200 (>100 boosts
+    effect drive levels); autocenter callers validate their own 0..100 cap via
+    the shared range here staying permissive."""
     try:
         v = int(s)
     except ValueError:
         raise argparse.ArgumentTypeError(f"{s!r} is not an integer")
-    if not 0 <= v <= 100:
-        raise argparse.ArgumentTypeError(f"percent must be 0..100, got {v}")
+    if not 0 <= v <= 200:
+        raise argparse.ArgumentTypeError(f"percent must be 0..200, got {v}")
     return v
 
 
@@ -484,8 +500,9 @@ def parse_args(argv=None):
                    help="deadzone fraction 0..1 applied to steering in modes B "
                         "and C (default 0)")
     p.add_argument("--ffb-gain", type=_gain_percent, default=100,
-                   help="clamp force-feedback gain to this percent 0..100 "
-                        "(default 100 = relay the game's gain untouched)")
+                   help="force-feedback strength percent 0..200: below 100 "
+                        "clamps the game's gain, above 100 boosts effect drive "
+                        "levels (default 100 = relay untouched)")
     p.add_argument("--ffb-autocenter", type=_gain_percent, default=None,
                    help="seed autocenter at this percent 0..100 on attach "
                         "(default: leave the base's setting alone)")

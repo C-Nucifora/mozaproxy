@@ -116,7 +116,7 @@ class TestValidation:
         with pytest.raises(ProfileError, match="buttons"):
             load_profile(path)
 
-    @pytest.mark.parametrize("value", ["-1", "101", '"50"', "true", "50.5"])
+    @pytest.mark.parametrize("value", ["-1", "201", '"50"', "true", "50.5"])
     def test_bad_ffb_gain(self, tmp_path, value):
         path = write(tmp_path, "gain", f'mode = "A"\nffb_gain = {value}\n')
         with pytest.raises(ProfileError, match="ffb_gain"):
@@ -824,3 +824,23 @@ class TestIdentityEmit:
         assert back.identity_product == 0
         # [identity] must not have swallowed the [axes] table.
         assert back.axes["steering"].deadzone == 0.05
+
+
+class TestFfbGainBoost:
+    def test_gain_up_to_200_valid(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\nffb_gain = 150\n')
+        prof = load_profile(p)
+        assert prof.ffb_gain == 150
+        assert daemon_args(prof, {}) == ["--mode", "A", "--ffb-gain", "150"]
+
+    def test_gain_201_rejected(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\nffb_gain = 201\n')
+        with pytest.raises(ProfileError, match="ffb_gain"):
+            load_profile(p)
+
+    def test_boost_round_trips_daemon_argparse(self):
+        import mozaproxy
+        args = mozaproxy.parse_args(["--ffb-gain", "150"])
+        assert args.ffb_gain == 150

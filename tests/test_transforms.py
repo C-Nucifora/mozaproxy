@@ -136,3 +136,80 @@ class TestStripFf:
     def test_no_ff_section_is_identity(self):
         ev = {ecodes.EV_ABS: []}
         assert strip_ff(ev, {ecodes.FF_SPRING}) is ev
+
+
+# ---------------------------------------------------------------------------
+# Effect boosting (ffb_gain > 100).
+# ---------------------------------------------------------------------------
+from evdev import ff
+
+from modes.base import boost_effect
+
+
+def _effect(etype, union):
+    return ff.Effect(etype, -1, 0x4000, ff.Trigger(0, 0), ff.Replay(1000, 0), union)
+
+
+class TestBoostEffect:
+    def test_constant_boosted_and_clamped(self):
+        e = _effect(ecodes.FF_CONSTANT,
+                    ff.EffectType(ff_constant_effect=ff.Constant(level=10000)))
+        boost_effect(e, 150)
+        assert e.u.ff_constant_effect.level == 15000
+        boost_effect(e, 200)   # 30000 -> ok; boost again to prove clamping
+        boost_effect(e, 200)
+        assert e.u.ff_constant_effect.level == 32767
+
+    def test_negative_constant_clamps_low(self):
+        e = _effect(ecodes.FF_CONSTANT,
+                    ff.EffectType(ff_constant_effect=ff.Constant(level=-30000)))
+        boost_effect(e, 200)
+        assert e.u.ff_constant_effect.level == -32768
+
+    def test_periodic_magnitude(self):
+        p = ff.Periodic(waveform=ecodes.FF_SINE, period=100, magnitude=8000,
+                        offset=0, phase=0, envelope=ff.Envelope(0, 0, 0, 0))
+        e = _effect(ecodes.FF_PERIODIC, ff.EffectType(ff_periodic_effect=p))
+        boost_effect(e, 150)
+        assert e.u.ff_periodic_effect.magnitude == 12000
+
+    def test_ramp_levels(self):
+        r = ff.Ramp(start_level=-1000, end_level=2000)
+        e = _effect(ecodes.FF_RAMP, ff.EffectType(ff_ramp_effect=r))
+        boost_effect(e, 150)
+        assert e.u.ff_ramp_effect.start_level == -1500
+        assert e.u.ff_ramp_effect.end_level == 3000
+
+    def test_rumble_magnitudes_u16_clamped(self):
+        r = ff.Rumble(strong_magnitude=0xC000, weak_magnitude=100)
+        e = _effect(ecodes.FF_RUMBLE, ff.EffectType(ff_rumble_effect=r))
+        boost_effect(e, 200)
+        assert e.u.ff_rumble_effect.strong_magnitude == 0xFFFF
+        assert e.u.ff_rumble_effect.weak_magnitude == 200
+
+    def test_condition_effects_untouched(self):
+        c = ff.Condition(right_saturation=1000, left_saturation=1000,
+                         right_coeff=500, left_coeff=500,
+                         deadband=0, center=0)
+        e = _effect(ecodes.FF_SPRING, ff.EffectType(ff_condition_effect=(c, c)))
+        boost_effect(e, 200)
+        got = e.u.ff_condition_effect[0]
+        assert got.right_saturation == 1000
+        assert got.right_coeff == 500
+
+
+class TestDescribeEffect:
+    def test_constant_magnitude_traced(self):
+        from mozaproxy import describe_effect
+        e = _effect(ecodes.FF_CONSTANT,
+                    ff.EffectType(ff_constant_effect=ff.Constant(level=12345)))
+        out = describe_effect(e)
+        assert "level=12345" in out
+
+    def test_rumble_traced(self):
+        from mozaproxy import describe_effect
+        e = _effect(ecodes.FF_RUMBLE,
+                    ff.EffectType(ff_rumble_effect=ff.Rumble(
+                        strong_magnitude=1000, weak_magnitude=2000)))
+        out = describe_effect(e)
+        assert "strong=1000" in out and "weak=2000" in out

@@ -63,7 +63,7 @@ class Profile:
     name: str
     mode: str = "A"                # canonical letter A|B|C|D
     buttons: int | None = None     # 1..128
-    ffb_gain: int = 100            # 0..100
+    ffb_gain: int = 100            # 0..200; <100 clamps gain, >100 boosts effects
     ffb_autocenter: int | None = None   # 0..100 seeded on attach; None = leave alone
     ffb_drop: list[str] = field(default_factory=list)  # canonical FF_* names, sorted
     # Virtual-device identity. identity_real clones the real base's name/ids at
@@ -200,8 +200,9 @@ def _parse_profile_file(path: str) -> Profile:
         raise ProfileError(f"{path}: 'buttons' must be an integer in 1..128")
 
     ffb_gain = data.get("ffb_gain", 100)
-    if not _is_int(ffb_gain) or not 0 <= ffb_gain <= 100:
-        raise ProfileError(f"{path}: 'ffb_gain' must be an integer in 0..100")
+    if not _is_int(ffb_gain) or not 0 <= ffb_gain <= 200:
+        raise ProfileError(f"{path}: 'ffb_gain' must be an integer in 0..200 "
+                           "(above 100 boosts effect strength)")
 
     ffb_autocenter = data.get("ffb_autocenter")
     if ffb_autocenter is not None and (

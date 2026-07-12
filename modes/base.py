@@ -91,6 +91,44 @@ def rescale(value: int, smin: int, smax: int, dmin: int, dmax: int,
     return int(round(dmin + t * (dmax - dmin)))
 
 
+def boost_effect(effect: "ff.Effect", percent: int) -> None:
+    """Amplify an effect's drive levels in place by `percent` (150 = +50%).
+
+    WHY: some games send timid FFB no matter what (FH5's output on a
+    direct-drive base reads as "super light"), and FF_GAIN cannot help once
+    the game already runs gain at max. Boosting rewrites the effect payloads
+    the daemon relays to the real base.
+
+    Only the drive-level payloads are scaled — constant level, periodic
+    magnitude, ramp start/end, rumble magnitudes. Condition effects
+    (spring/damper/friction/inertia) are left untouched: scaling their
+    coefficients stiffens centering nonlinearly and can oscillate a
+    direct-drive wheel. Values clamp to their kernel field ranges.
+    """
+    k = percent / 100.0
+
+    def s16(v: float) -> int:
+        return int(clamp(v, -32768, 32767))
+
+    def u16(v: float) -> int:
+        return int(clamp(v, 0, 0xFFFF))
+
+    if effect.type == ecodes.FF_CONSTANT:
+        c = effect.u.ff_constant_effect
+        c.level = s16(c.level * k)
+    elif effect.type == ecodes.FF_PERIODIC:
+        p = effect.u.ff_periodic_effect
+        p.magnitude = s16(p.magnitude * k)
+    elif effect.type == ecodes.FF_RAMP:
+        r = effect.u.ff_ramp_effect
+        r.start_level = s16(r.start_level * k)
+        r.end_level = s16(r.end_level * k)
+    elif effect.type == ecodes.FF_RUMBLE:
+        r = effect.u.ff_rumble_effect
+        r.strong_magnitude = u16(r.strong_magnitude * k)
+        r.weak_magnitude = u16(r.weak_magnitude * k)
+
+
 def scale_gain(value: int, percent: int) -> int:
     """Scale an FF_GAIN value by a profile's gain percentage, clamped 0..0xFFFF.
 
@@ -198,6 +236,6 @@ class Mode:
 
 __all__ = [
     "RealCaps", "VirtualSpec", "Mode",
-    "rescale", "clamp", "scale_gain", "SIGNED16", "TRIGGER8", "HAT",
+    "rescale", "clamp", "scale_gain", "boost_effect", "SIGNED16", "TRIGGER8", "HAT",
     "FF_EFFECT_TYPES", "canon_ff_type", "strip_ff",
 ]

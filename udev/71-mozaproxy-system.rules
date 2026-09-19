@@ -1,0 +1,10 @@
+# Opt-in service access alongside the active desktop seat. Never hide the wheel.
+# Install only with the separate activation command, before seat-late ACLs.
+SUBSYSTEM=="input", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0000", TAG+="uaccess", GROUP:="mozaproxy-hardware", MODE:="0660"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0000", TAG+="uaccess", GROUP:="mozaproxy-hardware", MODE:="0660"
+SUBSYSTEM=="usb", ATTR{idVendor}=="346e", ATTR{idProduct}=="0000", TAG+="uaccess", GROUP:="mozaproxy-hardware", MODE:="0660"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0000", TAG+="uaccess", GROUP:="mozaproxy-hardware", MODE:="0660"
+# Preserve ordinary desktop uinput access while adding the service account.
+SUBSYSTEM=="misc", KERNEL=="uinput", GROUP="mozaproxy-hardware", MODE="0660", TAG+="uaccess"
+# The compact virtual wheel belongs to the desktop seat.
+SUBSYSTEM=="input", ATTRS{id/vendor}=="346e", ATTRS{id/product}=="0002", TAG+="uaccess"

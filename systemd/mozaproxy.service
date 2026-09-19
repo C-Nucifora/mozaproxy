@@ -1,13 +1,13 @@
 [Unit]
-Description=mozaproxy - clean virtual MOZA wheel with force-feedback relay
+Description=mozaproxy - Linux wheel input and force-feedback relay
 Documentation=https://github.com/C-Nucifora/mozaproxy
 After=graphical-session.target
 
 [Service]
 Type=simple
-# %h is the user's home. Adjust ExecStart if you cloned elsewhere or want flags
-# (e.g. --buttons 24). install.sh writes the correct absolute paths for you.
-ExecStart=%h/Documents/GitHub/mozaproxy/.venv/bin/python %h/Documents/GitHub/mozaproxy/mozaproxy.py
+# install.sh --service replaces @CHECKOUT@ with the quoted checkout path.
+# Start manually while validating games; the native profile preserves inputs.
+ExecStart="@CHECKOUT@/.venv/bin/python" "@CHECKOUT@/mozaproxy.py" --profile native
 Restart=on-failure
 RestartSec=2
 

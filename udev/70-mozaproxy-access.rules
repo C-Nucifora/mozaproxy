@@ -1,0 +1,5 @@
+# Access only. Physical wheels remain visible when the proxy is stopped.
+# Must precede the distribution's seat-late rules for uaccess ACL processing.
+SUBSYSTEM=="misc", KERNEL=="uinput", TAG+="uaccess"
+# Direct-HID game input for the connected MOZA base, including after reconnect.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="346e", ATTRS{idProduct}=="0000", TAG+="uaccess"

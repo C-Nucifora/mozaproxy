@@ -1,0 +1,32 @@
+[Unit]
+Description=MOZA wheel settings and optional relay control service
+After=systemd-udevd.service
+
+[Service]
+Type=simple
+User=mozaproxy
+Group=@CLIENT_GROUP@
+SupplementaryGroups=mozaproxy-hardware
+ExecStart=@RUNTIME@/venv/bin/python -I -m mozaproxy.system_service --socket /run/mozaproxy/control.sock --client-uid @CLIENT_UID@
+WorkingDirectory=/
+RuntimeDirectory=mozaproxy
+RuntimeDirectoryMode=0750
+UMask=0007
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=10
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

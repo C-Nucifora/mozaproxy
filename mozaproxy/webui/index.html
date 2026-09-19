@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#272b2b">
+  <title>Mozaproxy · Wheel control</title>
+  <link rel="icon" href="/wheel.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to controls</a>
+  <aside class="sidebar" aria-label="Application">
+    <a class="brand" href="#overview" aria-label="Mozaproxy overview"><svg width="31" height="31" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 25V7h5l6 10 6-10h5v18h-5V15l-6 9-6-9v10Z" fill="currentColor"/></svg><span>mozaproxy<span class="brand-caption">Wheel control</span></span></a>
+    <nav aria-label="Main navigation" id="navigation"></nav>
+    <div class="sidebar-bottom"><div class="connection-label"><span class="status-dot" id="app-dot"></span><span id="app-connection">Connecting locally</span></div><span class="local-address">127.0.0.1 · on this computer</span></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><span class="device-title" id="device-title">Looking for wheelbase…</span><div class="topbar-status"><span id="device-connection" class="badge">Waiting</span><span class="topbar-divider"></span><span id="relay-status">Relay stopped</span></div></header>
+    <div id="connection-error" class="connection-error" role="alert" hidden></div>
+    <main id="content" tabindex="-1"><div class="initial-loading" aria-busy="true"><h1>Overview</h1><p>Connecting to your local wheel control app…</p><div class="skeleton"></div></div></main>
+    <footer class="workspace-footer"><span>Local controls. Your hardware.</span><span id="last-update">Waiting for device state</span></footer>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

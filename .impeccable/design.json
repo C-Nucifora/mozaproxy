@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-18T05:09:09.026289Z",
+  "title": "Mozaproxy native Qt design system",
+  "extensions": {
+    "platform": "Linux desktop",
+    "toolkit": "Qt 6 / PySide6",
+    "sources": [
+      "mozaproxy/desktop.py",
+      "mozaproxy/qt_widgets.py",
+      "mozaproxy/qt_controller.py"
+    ],
+    "nativeAppearance": {
+      "palette": "Active QPalette supplied by the desktop",
+      "font": "Inherited QApplication font",
+      "controls": "Native Qt widget style",
+      "steeringPaletteRoles": {
+        "available": "Text",
+        "unavailable": "Mid",
+        "hub": "Window",
+        "marker": "Highlight"
+      },
+      "headingPointOffsets": {
+        "device": 2,
+        "page": 5
+      },
+      "headingWeight": "Bold"
+    },
+    "layout": {
+      "unit": "Qt logical pixels",
+      "initialWindow": [
+        1180,
+        820
+      ],
+      "minimumWindow": [
+        820,
+        620
+      ],
+      "outerMargins": 12,
+      "navigationWidth": 175,
+      "navigationItemSpacing": 5,
+      "settingEditorWidth": [
+        160,
+        245
+      ],
+      "settingRowVerticalMargins": 8,
+      "settingColumnGap": 16,
+      "settingRowGap": 3,
+      "benchGap": 24,
+      "benchStretch": [
+        1,
+        2
+      ],
+      "profileSplitterInitialSizes": [
+        280,
+        520
+      ]
+    },
+    "runtime": {
+      "state": "Direct injected AppState",
+      "workerCount": 1,
+      "snapshotIntervalMs": 200,
+      "busyRefresh": "Skip while an operation is running",
+      "delivery": "Queued Qt signals on the GUI thread",
+      "draftPreservation": "Keep focused editors and invalid text during refresh",
+      "hardwareOwnership": "Explicit settings connection, conflict status and coordinated backend cleanup"
+    },
+    "review": {
+      "directory": ".impeccable/review/qt",
+      "widths": [
+        1180,
+        900
+      ],
+      "sections": [
+        "overview",
+        "wheelbase",
+        "controls",
+        "profiles",
+        "games",
+        "diagnostics"
+      ],
+      "filenamePattern": "{section}-{width}.png",
+      "settingsState": "Disconnected",
+      "scope": "Native runtime review captures; no hardware write or game compatibility claim"
+    },
+    "previewPolicy": "Native widget descriptions only. No HTML/CSS previews or fixed theme color tokens."
+  },
+  "components": [
+    {
+      "name": "Section navigation",
+      "kind": "nav",
+      "nativeClass": "QListWidget + QStackedWidget",
+      "description": "Six persistent sections, native selection and Alt+1 through Alt+6 shortcuts."
+    },
+    {
+      "name": "Tabbed settings",
+      "kind": "custom",
+      "nativeClass": "QTabWidget + QScrollArea",
+      "description": "Scrollable schema groups for wheelbase, force feedback and peripheral settings."
+    },
+    {
+      "name": "Setting row",
+      "kind": "input",
+      "nativeClass": "SettingRow + QComboBox / _NumberEditor",
+      "description": "Typed draft editor, separate confirmed readback and persistent inline validation."
+    },
+    {
+      "name": "Draft actions",
+      "kind": "button",
+      "nativeClass": "QPushButton + QLabel",
+      "description": "Explicit connect, read, disconnect, discard and apply actions with busy and conflict gating."
+    },
+    {
+      "name": "Input bench",
+      "kind": "custom",
+      "nativeClass": "InputBench + _SteeringWheel + QProgressBar",
+      "description": "Palette-aware QPainter steering with measured pedal values and unavailable states."
+    },
+    {
+      "name": "Profiles",
+      "kind": "custom",
+      "nativeClass": "QSplitter + QListWidget + QFormLayout + QPlainTextEdit",
+      "description": "Saved setup selection, editable metadata and a read-only value preview."
+    },
+    {
+      "name": "Game relay",
+      "kind": "custom",
+      "nativeClass": "QGroupBox + QComboBox + QPushButton",
+      "description": "Explicit start and stop actions; mode selection alone does not start the relay."
+    },
+    {
+      "name": "Compatibility and diagnostics",
+      "kind": "custom",
+      "nativeClass": "QTreeWidget + QPlainTextEdit",
+      "description": "Observed statuses, selectable launch commands, relay output and diagnostic export."
+    }
+  ],
+  "narrative": {
+    "northStar": "A native wheel setup utility",
+    "overview": "Mozaproxy is a native Linux desktop utility for observing wheel input, preparing settings and controlling the game relay. Qt 6 through PySide6 supplies the system palette, fonts, controls, focus treatment and dialogs. The interface follows the desktop theme.",
+    "keyCharacteristics": [
+      "Six persistent sections with native list navigation and tabbed settings.",
+      "Confirmed device readings stay separate from editable drafts.",
+      "A palette-aware steering drawing and native pedal progress bars show measured input."
+    ],
+    "rules": [],
+    "dos": [
+      "Do use the active Qt palette, application font and native widget style.",
+      "Do show confirmed readings, saved profile values and drafts separately.",
+      "Do preserve invalid edits and display a repair message.",
+      "Do keep Apply, settings connection and relay start as explicit actions.",
+      "Do keep launch commands selectable and copyable.",
+      "Do report missing readings and ownership conflicts in text."
+    ],
+    "donts": [
+      "Don't hardcode a web palette, bundle a UI font or style native controls with web CSS.",
+      "Don't invent telemetry or mark a write confirmed before verified readback.",
+      "Don't connect settings, write hardware or start the relay when a page or profile is selected.",
+      "Don't replace native controls with HTML previews or decorative dashboard cards."
+    ]
+  }
+}

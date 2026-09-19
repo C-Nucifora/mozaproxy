@@ -23,6 +23,13 @@ The implemented sources are `mozaproxy/desktop.py`, `mozaproxy/qt_widgets.py` an
 
 The system Qt palette owns backgrounds, text, selection, borders and disabled states. The custom steering drawing reads `QPalette.Text` for available input, `QPalette.Mid` for unavailable input, `QPalette.Window` for its hub and `QPalette.Highlight` for the center marker. Native progress bars use the active widget style.
 
+Before creating QApplication, `desktop_theme.py` adds compatible system Qt theme
+plugin directories after the bundled plugin paths. This lets PySide6 use the
+desktop's selected integration, including qt6ct colours, fonts and icon theme.
+The theme plugin handles live palette changes. The app does not copy colours
+into a stylesheet or modify the user's theme configuration. See
+[desktop theme integration](docs/desktop-themes.md) for compatibility limits.
+
 Written states carry meaning independently of color. Missing axes say "Not available"; unread settings say "Not read". Connection, relay, operation and validation messages remain visible as text. There is no fixed brand accent or application-specific light or dark palette.
 
 ## Typography

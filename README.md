@@ -22,6 +22,10 @@ creates the virtual environment, installs PySide6, and adds the launcher and
 desktop entry for your user. Keep this checkout in place, or rerun the installer
 after moving it. No browser or local HTTP server is needed.
 
+The app follows your native Qt colour scheme, fonts and icons, including live
+palette updates through qt6ct. See [desktop themes](docs/desktop-themes.md) if
+your distribution's Qt theme plugin and the bundled PySide6 use different versions.
+
 To launch directly from the checkout:
 
 ```bash

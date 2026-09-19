@@ -40,6 +40,7 @@ from .qt_controller import Controller
 from .qt_widgets import InputBench, SettingRow
 from .game_mapping_editor import GameMappingEditor
 from .game_mappings import default_mapping
+from .desktop_theme import configure_desktop_plugins
 
 
 def label(text="", wrap=False):
@@ -873,6 +874,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     # Publish native controls on desktops without an active screen reader.
     os.environ.setdefault("QT_LINUX_ACCESSIBILITY_ALWAYS_ON", "1")
+    configure_desktop_plugins()
     app = QApplication.instance() or QApplication(["mozaproxy"])
     app.setApplicationName("Mozaproxy")
     app.setDesktopFileName("mozaproxy")

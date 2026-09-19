@@ -568,3 +568,17 @@ separate SDK setup; physical FFB quality remains unconfirmed.
 - Branch: t3code/rebuild-linux-ffb-compatibility. Preserve unrelated remote work;
   do not force push. Keep downloaded vendor DLLs, private game saves, logs and
   runtime captures outside the repository.
+
+## Native desktop theme integration, 2026-09-19
+
+Fixed PySide6's missing system theme plugin discovery. The desktop now appends
+system roots containing a platform theme built for the same Qt major/minor and
+build mode, while keeping bundled platform plugins first. The user's selected
+qt6ct darker palette, Cantarell font and Tela-circle-purple icons now load.
+No global theme configuration was changed. A regression verifies live palette
+changes through qt6ct and preservation of an unsaved settings draft.
+
+All 204 tests passed, including opt-in virtual kernel tests. Dark and light
+native screenshots were checked. The restarted Wayland app loaded system
+qt6ct and the bundled Wayland platform plugin. The wheel is powered off and
+the app-owned relay stopped when the old app closed. Heat mappings remain saved.

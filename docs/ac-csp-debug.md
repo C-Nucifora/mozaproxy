@@ -1,8 +1,9 @@
 # Assetto Corsa CSP investigation, 2026-09-24
 
 The user reports CSP failing to load and asks whether Proton or reinstalls are
-needed. No desktop automation was used, as requested. The wheel was powered on
-later in this session; independent detection and motor-free tests passed.
+needed. Initial diagnostics avoided desktop automation, as requested. The user
+subsequently approved a normal Steam launch using Hypruse. The wheel was powered
+on later in this session; independent detection and motor-free tests passed.
 
 ## Starting state
 
@@ -48,11 +49,11 @@ not the first useful action. They do not establish that switching the whole
 installation to Proton 9 is ready for use: Content Manager needs a normal Steam
 launch check first, followed by an on-track CSP check on the real display.
 
-## Preserved state and next step
+## State after isolated diagnostics
 
 Installed GE-Proton9-20 alongside existing runtimes after verifying the archive
-against the upstream SHA-512 file. It is not selected for any game. No live
-prefix, game/mod files, Steam selections or launch options were changed.
+against the upstream SHA-512 file. At that stage it was not selected for any game. No live
+prefix, game/mod files, Steam selections or launch options had been changed.
 Diagnostic processes were stopped; no physical forces were sent.
 
 Local evidence, copied prefixes and probe scripts are under
@@ -61,8 +62,38 @@ vendor DLLs outside this repository. The wheel check log is
 `/tmp/mozaproxy-wheel-health-20260924.log`: 39 software tests passed, including
 virtual kernel input/FFB lifecycle tests. Physical FFB was not tested.
 
-Next: obtain the user's agreement for desktop automation, or coordinate a
-manual normal Steam launch, before treating a runtime change as a solution.
+## Normal Steam verification
+
+After the user approved desktop automation, backed up the live prefix and Steam
+configuration again under `live-before-runtime-test/` in the evidence directory.
+Restarted Steam to discover GE-Proton9-20 and selected it for AC only. Steam's
+settings window did not respond reliably to automation, so the per-game runtime
+entry was changed while Steam was fully stopped. The global default and other
+games' runtime entries were preserved.
+
+The first normal launch exposed a `rundll32.exe` startup-error dialog during
+prefix conversion. Dismissing its offer to open more information let conversion
+finish. Content Manager then logged `Main window is loaded and ready` at 17:34:31.
+This explains a possible blocker in the earlier isolated CM test; it is not
+proof that every isolated stall had the same cause.
+
+Launched the saved NK16/FSAEJ session through Content Manager. The 17:36 CSP log
+reports all 2,373 functions found, and the game log confirms all hooks installed.
+The real display rendered the car and track at the pre-race screen for several
+minutes. This verifies CSP initialization and rendering, not driving or physical
+FFB. Automation could not reliably activate the drive control. The compositor
+resize during monitor placement also temporarily changed the render size;
+toggling fullscreen restored it. No graphics configuration was edited.
+
+Kept `PROTON_NO_ESYNC=1 %command%` unchanged. No game, CSP or .NET reinstall was
+needed. First-launch evidence is archived in `normal-steam-ge9-first/`. The game
+and Content Manager were closed normally before a second Steam launch.
+
+The second launch completed after Steam rebuilt Vulkan shaders. Content Manager
+again logged its main window loaded and ready, without the conversion dialog.
+Its log is archived in `normal-steam-ge9-second/`. Content Manager is left open
+on the right monitor, Steam on the left, cursor on the left. A user driving/FFB
+check remains necessary; do not treat this CSP fix as a new wheel validation.
 
 ## References investigated
 

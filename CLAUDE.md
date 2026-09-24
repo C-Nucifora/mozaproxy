@@ -585,13 +585,28 @@ the app-owned relay stopped when the old app closed. Heat mappings remain saved.
 
 ## AC CSP investigation, 2026-09-24
 
-User requests no computer use for now. Wheel is now powered on; independent
-read-only detection and 39 motor-free software tests passed. No relay active.
-See docs/ac-csp-debug.md for isolated startup comparisons. CSP 0.2.11 fails
-initialization on GE-Proton10-25 and 11-7, but finds all 2,373 functions and
-installs hooks under GE-Proton9-20 using the same game/CSP files. That older
-runtime stalls in Content Manager in the test copy; normal Steam launch remains
-necessary before recommending it. Virtual-display mode-query errors prevent
-on-track validation. GE-Proton9-20 was installed but not selected. All live game,
-prefix and Steam settings are unchanged. Diagnostic processes were cleaned up.
-Evidence and copies: ~/.local/state/mozaproxy/game-tests/ac-csp-20260924/.
+The user initially prohibited computer use, then explicitly approved it for
+normal Steam verification. The wheel is powered on. Independent read-only
+hardware detection and 39 motor-free software tests passed. No relay is active.
+
+See docs/ac-csp-debug.md. CSP 0.2.11 fails initialization on GE-Proton10-25 and
+11-7, but finds all 2,373 functions and installs hooks under GE-Proton9-20 with
+the same game/CSP files. AC now selects GE-Proton9-20 only; other runtime
+selections and launch options are unchanged. AC launch options remain
+`PROTON_NO_ESYNC=1 %command%`.
+
+A normal Steam launch revealed a rundll32 startup-error dialog during prefix
+conversion. Answering No to its information-link question allowed startup to
+finish. Content Manager loaded successfully, launched the saved NK16/FSAEJ
+session, and the game rendered the car and track at the pre-race screen. Fresh
+logs confirm CSP initialized and loading completed. Driving and physical FFB
+were not verified. No game/CSP/.NET reinstall was performed.
+
+The live prefix and Steam settings were backed up before the runtime change in
+`~/.local/state/mozaproxy/game-tests/ac-csp-20260924/live-before-runtime-test/`.
+First normal launch evidence is in `normal-steam-ge9-first/` alongside it.
+Steam rebuilt Vulkan shaders for the second launch after the runtime change.
+The second normal Steam launch opened Content Manager without the conversion
+dialog. Evidence is in `normal-steam-ge9-second/`. Content Manager is left open
+on the right monitor; Steam and cursor are on the left. User driving/FFB check
+remains outstanding.

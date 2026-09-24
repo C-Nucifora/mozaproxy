@@ -582,3 +582,16 @@ All 204 tests passed, including opt-in virtual kernel tests. Dark and light
 native screenshots were checked. The restarted Wayland app loaded system
 qt6ct and the bundled Wayland platform plugin. The wheel is powered off and
 the app-owned relay stopped when the old app closed. Heat mappings remain saved.
+
+## AC CSP investigation, 2026-09-24
+
+User requests no computer use for now. Wheel is now powered on; independent
+read-only detection and 39 motor-free software tests passed. No relay active.
+See docs/ac-csp-debug.md for isolated startup comparisons. CSP 0.2.11 fails
+initialization on GE-Proton10-25 and 11-7, but finds all 2,373 functions and
+installs hooks under GE-Proton9-20 using the same game/CSP files. That older
+runtime stalls in Content Manager in the test copy; normal Steam launch remains
+necessary before recommending it. Virtual-display mode-query errors prevent
+on-track validation. GE-Proton9-20 was installed but not selected. All live game,
+prefix and Steam settings are unchanged. Diagnostic processes were cleaned up.
+Evidence and copies: ~/.local/state/mozaproxy/game-tests/ac-csp-20260924/.

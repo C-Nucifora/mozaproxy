@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 
 from .app_state import AppState, validate_settings
 from .qt_controller import Controller
-from .qt_widgets import InputBench, SettingRow
+from .qt_widgets import InputBench, SettingRow, TorqueSettingRow
 from .game_mapping_editor import GameMappingEditor
 from .game_mappings import default_mapping
 from .desktop_theme import configure_desktop_plugins
@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
         for definition in self.schema["settings"]:
             if definition["group"] != group["id"]:
                 continue
-            row = SettingRow(definition)
+            row = (TorqueSettingRow if definition["id"] == "torque" else SettingRow)(definition)
             row.edited.connect(
                 lambda key, value: self.set_draft(key, value, update_editor=False)
             )
@@ -436,6 +436,9 @@ class MainWindow(QMainWindow):
         )
         values = hardware.get("values", {})
         for key, row in self.rows.items():
+            if isinstance(row, TorqueSettingRow) and row.set_device(hardware):
+                self.invalid_fields.discard(key)
+                row.set_value(self.draft.get(key, values.get(key)))
             row.set_reading(values.get(key))
             if key not in self.invalid_fields and not row.isAncestorOf(
                 QApplication.focusWidget()

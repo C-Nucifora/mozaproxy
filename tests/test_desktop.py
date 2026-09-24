@@ -7,8 +7,10 @@ import unittest
 from copy import deepcopy
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtTest import QTest
 
 from mozaproxy.desktop import MainWindow
+from mozaproxy.settings import SETTINGS
 
 STATE = {
     "device": {
@@ -29,6 +31,7 @@ STATE = {
 SCHEMA = {
     "groups": [{"id": "base", "label": "Wheelbase"}],
     "settings": [
+        SETTINGS["torque"].schema(),
         {
             "id": "rotation",
             "label": "Steering rotation",
@@ -81,6 +84,77 @@ class DesktopTests(unittest.TestCase):
 
             time.sleep(0.005)
         self.window.close()
+
+    def torque_state(self, percent=50):
+        state = deepcopy(STATE)
+        state["hardware"].update(
+            connected=True,
+            port="/dev/serial/by-id/usb-Gudsen_MOZA_R25_Ultra_Base_TEST-if00",
+            values={"torque": percent},
+        )
+        return state
+
+    def test_r25_torque_readback_is_nm_but_profiles_keep_percent(self):
+        self.window.update_state(self.torque_state(70))
+        row = self.window.rows["torque"]
+        self.assertEqual(row.editor.value(), 17.5)
+        self.assertIn("17.5 Nm", row.confirmed_label.text())
+        self.assertEqual(self.window.profile_values()["torque"], 70)
+        row.editor.setValue(13.1)
+        self.assertEqual(self.window.pending_values()["torque"], 52)
+        self.assertIn("13 Nm", row.description_label.text())
+        self.assertIn("17.5 Nm", row.confirmed_label.text())
+
+    def test_eight_nm_is_rejected_without_silently_raising_the_request(self):
+        self.window.update_state(self.torque_state())
+        row = self.window.rows["torque"]
+        row.editor.lineEdit().setText("8 Nm")
+        row.editor.lineEdit().textEdited.emit("8 Nm")
+        self.assertIn("torque", self.window.invalid_fields)
+        self.assertFalse(self.window.apply_button.isEnabled())
+        self.assertFalse(self.window.save_profile_button.isEnabled())
+        self.assertIn("12.5", row.error_label.text())
+        self.window.update_state(self.torque_state())
+        self.assertIn("8", row.editor.lineEdit().text())
+        self.assertEqual(self.window.pending_values(), {})
+
+    def test_excess_precision_cannot_hide_a_larger_torque_draft_on_focus_loss(self):
+        self.window.update_state(self.torque_state())
+        self.window.navigation.setCurrentRow(1)
+        self.window.show()
+        row = self.window.rows["torque"]
+        row.editor.setFocus()
+        row.editor.lineEdit().selectAll()
+        QTest.keyClicks(row.editor.lineEdit(), "13.2499")
+        self.window.connect_button.setFocus()
+        self.qt.processEvents()
+        self.assertIn("torque", self.window.invalid_fields)
+        self.assertFalse(self.window.apply_button.isEnabled())
+        self.assertIn("13.2499", row.editor.lineEdit().text())
+
+    def test_unknown_base_does_not_inherit_r25_nm_conversion(self):
+        state = self.torque_state()
+        state["hardware"]["port"] = "/dev/ttyACM0"
+        state["device"].update(connected=True, name="MOZA R25 Ultra Base")
+        self.window.update_state(state)
+        row = self.window.rows["torque"]
+        self.assertEqual(row.editor.suffix(), " %")
+        self.assertEqual(row.editor.value(), 50)
+        self.window.update_state(self.torque_state())
+        self.assertEqual(row.editor.value(), 12.5)
+        row.editor.setValue(15)
+        self.window.update_state(state)
+        self.assertEqual(row.editor.value(), 60)
+        self.assertEqual(self.window.draft["torque"], 60)
+
+    def test_disconnected_torque_reading_is_unknown_and_draft_survives(self):
+        self.window.update_state(self.torque_state())
+        row = self.window.rows["torque"]
+        row.editor.setValue(15)
+        self.window.update_state(deepcopy(STATE))
+        self.assertIn("Not read", row.confirmed_label.text())
+        self.assertEqual(self.window.draft["torque"], 60)
+        self.assertFalse(self.window.apply_button.isEnabled())
 
     def test_six_native_pages_and_disconnected_apply(self):
         self.assertEqual(self.window.pages.count(), 6)

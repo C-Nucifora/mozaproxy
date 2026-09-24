@@ -1,6 +1,7 @@
 """Native setting editors and passive input instruments for the Qt desktop app."""
 
 import math
+import re
 
 from PySide6.QtCore import QPointF, QRectF, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import QPainter, QPalette, QPen, QValidator
@@ -42,7 +43,12 @@ class _NumberEditor(QDoubleSpinBox):
         self.setKeyboardTracking(False)
 
     def parsed_value(self):
-        text = self.lineEdit().text().strip()
+        # Accept only numbers Qt can commit unchanged. Excess decimal places
+        # otherwise enter the draft but revert visually when focus leaves.
+        full_text = self.lineEdit().text()
+        if super().validate(full_text, len(full_text))[0] != QValidator.State.Acceptable:
+            return None
+        text = full_text.strip()
         suffix = self.suffix()
         if suffix and text.endswith(suffix):
             text = text[: -len(suffix)].strip()
@@ -205,6 +211,77 @@ class SettingRow(QWidget):
         self.error_label.setText(str(message or ""))
         self.error_label.setVisible(bool(message))
         self.editor.setToolTip(str(message or self.definition.get("description", "")))
+
+
+class TorqueSettingRow(SettingRow):
+    """Display the known R25 rating in Nm, retaining percent on every API boundary."""
+
+    def __init__(self, definition, parent=None):
+        self._percent_definition = dict(definition)
+        self._nm = False
+        super().__init__(dict(definition), parent)
+
+    def set_device(self, hardware):
+        # R16/R21/R25 share USB IDs. Only the settings connection's explicit
+        # model name is evidence for the 25 Nm conversion, never a virtual ID.
+        port = (hardware.get("port") or "").rsplit("/", 1)[-1]
+        nm = bool(hardware.get("connected") and re.fullmatch(
+            r"usb-Gudsen_MOZA_R25_Ultra_Base_[A-Za-z0-9]+-if[0-9]+", port))
+        if nm == self._nm:
+            return False
+        self._nm = nm
+        factor = 0.25 if nm else 1
+        self.definition = dict(self._percent_definition)
+        if nm:
+            self.definition.update(label="Maximum torque", unit="Nm")
+        self.name_label.setText(self.definition["label"])
+        self.editor.setAccessibleName(self.definition["label"])
+        with QSignalBlocker(self.editor), QSignalBlocker(self.editor.lineEdit()):
+            self.editor.lower = self.definition["min"] * factor
+            self.editor.upper = self.definition["max"] * factor
+            self.editor.unknown = self.editor.lower - factor
+            self.editor.setRange(self.editor.unknown, self.editor.upper)
+            self.editor.setSingleStep(factor)
+            self.editor.setSuffix(" Nm" if nm else " %")
+        self._describe()
+        return True
+
+    def _format_value(self, value):
+        if value is not None and self._nm:
+            return f"{value * 0.25:g} Nm ({value:g}%)"
+        return super()._format_value(value)
+
+    def set_value(self, value):
+        super().set_value(value * 0.25 if value is not None and self._nm else value)
+        self._describe()
+
+    def value(self):
+        value = super().value()
+        if value is not None and self._nm:
+            # Whole-percent hardware steps. Never round a requested ceiling up.
+            return math.floor(value * 4)
+        return value
+
+    def _changed(self, *_args):
+        super()._changed(*_args)
+        self._describe()
+        if self._invalid and self._nm:
+            self.set_error(
+                "Enter 12.5–25 Nm. This R25 firmware rejects limits below 12.5 Nm; "
+                "8 Nm cannot be applied. Lower game gain is not a hardware torque cap.")
+
+    def _describe(self):
+        text = self._percent_definition.get("description", "")
+        if self._nm:
+            text = (
+                "R25 Ultra · 25 Nm rated. Firmware range: 12.5–25 Nm. "
+                "8 Nm is below the supported minimum. Values between 0.25 Nm steps "
+                "round down. This is the configured limit, not measured torque.")
+            value = self.value()
+            if value is not None:
+                text += f" Apply target: {value * 0.25:g} Nm ({value:g}%)."
+        self.description_label.setText(text)
+        self.editor.setAccessibleDescription(text)
 
 
 class _SteeringWheel(QWidget):

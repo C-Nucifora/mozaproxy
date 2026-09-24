@@ -85,8 +85,8 @@ add(
 )
 add("ffb_strength", "Game force strength", "base", 2, scale=10,
     description="Scales force feedback requested by the game. Base torque output separately controls the base's available force.")
-add("torque", "Base torque output", "base", 18, minimum=50,
-    description="Sets the base's torque output level. Game force strength separately scales the game's effects; this percentage is not a torque reading in Nm.")
+add("torque", "Maximum torque limit", "base", 18, minimum=50,
+    description="Limits maximum motor torque as a percentage of the base rating. Firmware accepts 50–100%. Game force strength is separate; reducing it does not establish a lower hardware torque cap.")
 add("speed", "Maximum wheel speed", "base", 10, maximum=200, scale=10,
     description="Controls how fast the motor can turn the steering wheel. The percentage is a device setting, not vehicle speed.")
 add(

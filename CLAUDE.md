@@ -610,3 +610,24 @@ The second normal Steam launch opened Content Manager without the conversion
 dialog. Evidence is in `normal-steam-ge9-second/`. Content Manager is left open
 on the right monitor; Steam and cursor are on the left. User driving/FFB check
 remains outstanding.
+
+## R25 maximum torque control, 2026-09-24
+
+User requested an 8 Nm cap and approved a Qt Nm control plus firmware check.
+Authorized serial write of torque 32% read back 50%; reconnect confirms 50%.
+Before: torque 70%, game FFB strength 20%. Kept lower torque 50%, gain 20%
+unchanged; no force pulses sent. Local evidence is in
+~/.local/state/mozaproxy/game-tests/r25-torque-20260924.json.
+This command cannot provide 8 Nm on tested firmware; 50% corresponds to
+12.5 Nm nominal. Do not claim an 8 Nm cap, or multiply gain and limit to infer
+one. Readback verifies configuration, not measured motor torque.
+
+Qt displays maximum torque in Nm only for the explicit R25 serial model, with
+12.5–25 Nm range and 0.25 Nm steps, rounding intermediate ceilings down. Backend
+and profiles retain percent. Unsupported requests block Apply instead of
+rounding up. Excess decimal precision stays invalid across focus changes.
+See docs/hardware-settings.md. Physical torque validation remains outstanding.
+All 209 tests passed, including opt-in virtual kernel tests. Live Qt readback
+shows 12.5 Nm (50%) with gain 20%; the app is open on the left on Wheelbase.
+No Boxflat process, Flatpak instance, matching service/autostart entry or serial
+owner was detected. Exclusive readback confirms the lower value persists.

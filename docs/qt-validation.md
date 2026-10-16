@@ -1,5 +1,10 @@
 # Native Qt6 validation
 
+Historical validation record from 18 September 2026. Counts and pending issues
+below describe that stage of development. Later attended FH5/JDM results
+supersede its freeze and FFB status. Use the [compatibility matrix](compatibility.md)
+for the latest recorded game evidence and remaining validation limits.
+
 Validated on 2026-09-18 with PySide6 6.11.2 on Arch Linux/Hyprland.
 
 The installed `mozaproxy-app` launcher opens native Qt Widgets on Wayland.

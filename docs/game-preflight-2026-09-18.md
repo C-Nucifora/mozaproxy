@@ -30,7 +30,7 @@ and JDM used `GE-Proton11-7`; both used Steam Runtime 4.
 
 ## Launch options actually stored in Steam
 
-Source: `~/.local/share/Steam/userdata/STEAM_USER_ID/config/localconfig.vdf`,
+Source: `~/.local/share/Steam/userdata/<steam-user-id>/config/localconfig.vdf`,
 `UserLocalConfigStore/Software/Valve/Steam/apps`. Other local Steam account
 configurations did not contain launch-option records for these games.
 

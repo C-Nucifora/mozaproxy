@@ -2,3 +2,14 @@
 __pycache__/
 *.pyc
 .impeccable/review/
+
+# Local configuration and private diagnostics
+.env
+.env.*
+!.env.example
+/.local-data/
+/logs/
+/captures/
+/game-tests/
+/profiles.json
+/mozaproxy-diagnostics*.json

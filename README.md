@@ -4,11 +4,11 @@ A native Qt 6 Linux desktop app for MOZA wheel settings, live input monitoring,
 and game compatibility. Its optional relay exposes a virtual wheel through uinput and
 forwards effects to the kernel's existing wheel driver.
 
-The rebuild is in hardware validation. First targets are Forza Horizon 5,
-Farming Simulator 22 and 25, and JDM: Japanese Drift Master. Assetto Corsa and
-Assetto Corsa Competizione are regression targets. FH5 and JDM driving, controls and physical FFB have been confirmed with their
-current local compatibility setups. Their freezes stopped after excluding Steam
-from T3 preview port scans. Other game tests and integrated game routing are pending. See [test status](docs/compatibility.md).
+The Qt rebuild is in hardware validation. Attended September 2026 tests confirmed
+FH5 and JDM driving, controls and physical force feedback with specific manual
+compatibility setups. Other game tests and integrated game routing remain
+incomplete. These observations do not establish support for every wheel, firmware
+or Proton version. See the [compatibility matrix](docs/compatibility.md).
 
 ## Desktop app
 
@@ -188,4 +188,13 @@ game checks with scripted steering, pedals and buttons, plus timestamped FFB
 capture. It creates a separate compact R9 device and never opens the physical
 wheel. Run `python tools/wheel-harness.py --help` for commands and limits.
 
-MIT license. See [LICENSE](LICENSE).
+## Licence and protocol references
+
+The project code is MIT-licensed. See [LICENSE](LICENSE).
+The bundled Adwaita Sans font is separately licensed under SIL OFL 1.1; its
+copyright notices and licence are in [fonts/LICENSE.txt](mozaproxy/webui/fonts/LICENSE.txt).
+
+The MOZA settings catalogue uses protocol addresses and conversions documented
+by [Boxflat](https://github.com/Lawstorant/boxflat). It does not import Boxflat at
+runtime. See [hardware settings](docs/hardware-settings.md) for the source
+reference and implementation details. Vendor game libraries are not bundled.

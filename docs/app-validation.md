@@ -1,5 +1,10 @@
 # App validation, 2026-09-18
 
+Historical validation record from 18 September 2026. Counts and pending issues
+below describe that stage of development. Later attended FH5/JDM results
+supersede its freeze and FFB status. Use the [compatibility matrix](compatibility.md)
+for the latest recorded game evidence and remaining validation limits.
+
 Implemented and checked in the rebuilding worktree. No game was launched and
 no motor test or physical configuration write was performed during this app work.
 

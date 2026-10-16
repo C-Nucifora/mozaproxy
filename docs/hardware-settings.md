@@ -11,6 +11,13 @@ in the installed [Boxflat project](https://github.com/Lawstorant/boxflat), notab
 stream parsing, validation and lifecycle code here are independently implemented.
 Boxflat is not launched or imported at runtime.
 
+Protocol-reference review used upstream commit
+`708ce8962760abe9b175bf3d0a1e1877905b16d3` of Boxflat, which is GPL-3.0 licensed.
+Shared protocol values include base address 19,
+read/write groups 40/41, the 0x7e frame marker and checksum seed 13. The local
+client implements request/reply handling, locking, validation and readback without
+Boxflat's queue-based serial handler or mutable command class.
+
 The current routing supports peripherals attached through the base. Standalone
 USB pedals, handbrakes and alternative wheel addresses are not implemented.
 Unavailable values remain absent; the app will not apply a setting unless the

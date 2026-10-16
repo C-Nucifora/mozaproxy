@@ -1,5 +1,10 @@
 # Compatibility tracking
 
+The matrix summarizes the latest recorded observations through 24 September
+2026. The dated sections below retain earlier diagnostic evidence; their pending
+steps and process/device numbers describe those sessions, not the current host.
+These are configuration-specific observations, not a general support guarantee.
+
 Do not interpret an advertised capability, accepted effect upload, or successful
 launch as proof of working physical force feedback.
 
@@ -13,8 +18,10 @@ secondary investigations. None are promoted to built-in support by that audit.
 | Farming Simulator 22 | 1248130 | 14439757 | Latest direct R25 launch reports FFB enabled after backed-up game.xml vibration flag correction. Physical rebinding, driving and FFB observation pending; device category UNKNOWN |
 | Farming Simulator 25 | 2300320 | 25209229 | Direct R25 reached main menu and is classified as WHEEL; log reports FFB disabled. Driving and physical FFB pending |
 | JDM: Japanese Drift Master | 1153410 | 25209638 | 2026-09-18 attended driving passed: user confirms controls, acceptable physical FFB and no freezing with direct physical HIDRAW, descriptor helper and T3 scanner mitigation; built-in routing pending |
-| Assetto Corsa | 244210 | 14923034 | Content Manager detects physical R25 and saved paddles; on-track regression pending |
+| Assetto Corsa | 244210 | 14923034 | 2026-09-24 GE-Proton9-20 initialized CSP and rendered a pre-race session; driving and physical FFB regression pending |
 | Assetto Corsa Competizione | 805550 | 21257365 | Main menu reached; physical R25 constant-force and damper initialization succeed; on-track regression pending |
+| BeamNG.drive | 284160 | Not recorded here | 2026-09-19 attended direct-R25 input passed with prefix-specific HIDRAW disabled; physical FFB quality and repeat-launch reliability unverified |
+| Need for Speed Heat | 1222680 | Not recorded here | 2026-09-19 attended input passed with G920 relay preset and separately installed Logitech SDK runtime; physical FFB quality unconfirmed |
 
 ## BeamNG attended input result, 2026-09-19
 
@@ -80,7 +87,7 @@ upstream fix. Evidence and rollback details are under
 
 The following remote-check entries predate this attended result.
 
-## Current remote checks and LSFG baseline
+## Earlier remote checks and LSFG baseline, 2026-09-18
 
 The later JDM investigation is recorded in [jdm-ffb-debug.md](jdm-ffb-debug.md)
 and `~/.local/state/mozaproxy/game-tests/jdm-freeze-return-20260918-171451/`.
@@ -211,13 +218,13 @@ repeating virtual-device axis-range experiments. This will test the wheel's
 native HID reports rather than Proton's synthesized reports; success is not
 assumed. The current wheel node is `/dev/hidraw9`, verified against USB
 `346e:0000`, and its ACL grants access only to root. `sudo -n` requires a password.
-A temporary ACL granting only user `desktop user` read/write access is the next
+A temporary ACL granting only the desktop user read/write access is the next
 required user action. No persistent udev rule or game setting has been changed
 for this test. After verifying access, configure and launch JDM for the direct
 HID test, then verify the actual Proton enumeration path and gradual input.
 
 The user applied the temporary ACL. A nonblocking read/write open of
-`/dev/hidraw9` now succeeds as `desktop user`; no HID reports were written by this
+`/dev/hidraw9` now succeeds as the desktop user; no HID reports were written by this
 check. The node still identifies as the physical `346e:0000` R25. No relay or
 JDM process is running. The planned short input-screen run uses
 `PROTON_LOG=1 WINEDEBUG=-all,+hid PROTON_ENABLE_HIDRAW=0x346e/0x0000 %command%`

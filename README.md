@@ -50,7 +50,7 @@ The relay starts only when requested and the app stops only its own child.
 Game-linked profiles and optional background detection are described in
 [game setup](docs/game-setup.md). Automatic Apply is off by default.
 [Hardware tools](docs/hardware-tools.md) add settings reports, supported pedal
-calibration, RGB controls and optional FH5 telemetry lighting. Physical validation
+calibration, RGB controls and optional [telemetry lighting](docs/telemetry.md) for LMU, ACC, AC, BeamNG, ETS2 and FH5. Physical validation
 remains pending. Firmware flashing and independent USB accessory configuration
 are not implemented; this is not full Boxflat parity.
 

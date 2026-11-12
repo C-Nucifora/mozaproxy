@@ -1,5 +1,6 @@
 """Explicit calibration and telemetry controls, separate from saved profiles."""
 import json
+from .telemetry import SOURCES
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox, QPlainTextEdit, QMessageBox
 
 
@@ -21,20 +22,31 @@ class HardwareToolsPanel(QWidget):
         self.stop_calibration = QPushButton('Stop calibration')
         self.stop_calibration.clicked.connect(lambda: owner._submit('calibration-stop', owner.backend.hardware.calibration_stop))
         form.addRow(self.stop_calibration)
+        self.source = QComboBox()
+        for key, label in SOURCES.items():
+            self.source.addItem(label, key)
+        self.source.setCurrentIndex(self.source.findData('fh5'))
+        form.addRow('Telemetry game', self.source)
+        self.maximum_rpm = QSpinBox()
+        self.maximum_rpm.setRange(100, 100000)
+        self.maximum_rpm.setValue(8000)
+        self.maximum_rpm.setEnabled(False)
+        self.source.currentIndexChanged.connect(lambda: self.maximum_rpm.setEnabled(self.source.currentData() == 'beamng'))
+        form.addRow('BeamNG RPM scale', self.maximum_rpm)
         self.port = QSpinBox()
         self.port.setRange(1024, 65535)
         self.port.setValue(20777)
-        form.addRow('FH5 Data Out UDP port', self.port)
+        form.addRow('Telemetry UDP port', self.port)
         self.output = QCheckBox('Send RPM LEDs to the connected wheel')
         form.addRow(self.output)
-        self.start_telemetry = QPushButton('Start FH5 telemetry')
+        self.start_telemetry = QPushButton('Start telemetry')
         self.start_telemetry.clicked.connect(self.telemetry)
         form.addRow(self.start_telemetry)
         self.stop_telemetry = QPushButton('Stop telemetry')
         self.stop_telemetry.clicked.connect(lambda: owner._submit('telemetry-stop', owner.backend.telemetry.stop))
         form.addRow(self.stop_telemetry)
         layout.addLayout(form)
-        note = QLabel('Preview is the default and sends no device commands. Configure FH5 Data Out to 127.0.0.1 and the port above yourself. Only the 324-byte FH5 format is accepted. Stale data clears the LEDs after 0.5 seconds. The bar uses reported maximum RPM, not a verified shift point. LED output requires the local connection and readable newer wheel RGB controls.')
+        note = QLabel('Preview is the default and sends no device commands. LMU, ACC and AC require the shared-memory helper in the game’s Proton context. ETS2 requires the telemetry plugin. FH5 uses Data Out; BeamNG uses OutGauge and the RPM scale above. Send to 127.0.0.1 on this port. See docs/telemetry.md for setup. Stale data clears the LEDs after 0.5 seconds. The bar uses reported maximum RPM or your BeamNG scale, not a verified shift point. LED output requires the local connection and readable newer wheel RGB controls.')
         note.setWordWrap(True)
         layout.addWidget(note)
         firmware = QLabel('<a href="https://support.mozaracing.com/en/support/solutions/articles/70000628053-downloads">Official MOZA firmware and recovery tools</a><br>Firmware flashing and independent USB accessory configuration are not implemented. No supported flashing/recovery protocol has been established here.')
@@ -54,7 +66,8 @@ class HardwareToolsPanel(QWidget):
 
     def telemetry(self):
         port, output = self.port.value(), self.output.isChecked()
-        self.owner._submit('telemetry-start', lambda: self.owner.backend.telemetry.start(port, output))
+        source, maximum = self.source.currentData(), self.maximum_rpm.value()
+        self.owner._submit('telemetry-start', lambda: self.owner.backend.telemetry.start(port, output, source, maximum))
 
     def refresh(self, state):
         hardware, telemetry = state.get('hardware', {}), state.get('telemetry', {})

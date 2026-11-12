@@ -33,26 +33,23 @@ for retry. If the device disconnected before Stop could be sent, use the MOZA
 recovery procedure before restarting the app; reopening it is not proof that
 hardware calibration ended. No wheel motor calibration or center reset is added.
 
-## FH5 telemetry
+## Telemetry lighting
 
-Set FH5 Data Out manually to `127.0.0.1` and the selected UDP port, default 20777.
-Start preview first. It opens a loopback listener but sends no device commands.
-Only the 324-byte FH5 Dash format is accepted. The decoder validates RPM values
-and packet timing. Malformed, duplicate and out-of-order packets do not refresh
-freshness. Restart the listener after restarting the game if its timestamp resets.
+[Telemetry setup](telemetry.md) covers LMU, ACC, AC, BeamNG.drive, ETS2 and FH5.
+Preview opens a loopback listener and sends no device commands. Each game has an
+explicit source selection; shared-memory games need the optional Windows reader,
+and ETS2 needs the SDK plugin. These feeds have offline validation only.
 
 Optional RPM LED output requires a local connected wheel with readable newer
 RGB controls and telemetry mode. The app saves the prior mode, enters external
 mode, and sends bounded ten-light masks at at most 20 Hz. Stale data clears the
 mask after 0.5 seconds; output ends on Stop, settings Apply, calibration, disconnect
 or app close. Restoration failures stay visible and Stop can retry after a
-settings reread. The bar starts at half the game's reported maximum RPM. This
-is a visualization, not a verified ideal shift point.
+settings reread. The bar starts at half the game's reported maximum RPM, or the
+configured BeamNG scale. This is not a verified ideal shift point.
 
 System-service mode supports telemetry preview only. LED output stays unavailable
-there rather than opening a second settings connection. ACC and LMU telemetry
-need separate Windows shared-memory bridges and are not implemented by this
-FH5 UDP adapter.
+there rather than opening a second settings connection.
 
 ## Firmware and accessories
 

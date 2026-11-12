@@ -13,3 +13,6 @@ __pycache__/
 /game-tests/
 /profiles.json
 /mozaproxy-diagnostics*.json
+
+# Locally compiled optional telemetry helpers
+/build/telemetry/

@@ -85,3 +85,23 @@ No live installation while the user plays.
 - Physical compatibility, settings writes and startup/reboot tests remain pending.
 
 Final checks: 209 existing tests pass with 4 skips; 12 hardware tests pass; browser regression and new Stop actions pass; temporary storage/game-service/calibration/telemetry checks pass; generated unit passes systemd-analyze.
+
+## Telemetry extension
+
+User requested all discussed games, starting with LMU and ACC. Add explicit
+source selection to the existing preview/output flow: read-only Windows shared
+memory for LMU/ACC/AC, native BeamNG OutGauge with a configured RPM scale, and an
+ETS2 SDK plugin. Keep FH5 compatible and output off by default. Compile helpers
+offline, validate synthetic feeds, review, and commit locally. Do not install
+helpers or touch running games/wheel hardware. Game detection continues to select
+profiles independently; telemetry output remains an explicit user action.
+
+Extension evidence: all 209 existing tests pass with four skips. The Windows
+reader builds against the installed LMU SDK; ETS2 Windows and Linux plugins
+build against SCS SDK headers. Temporary checks covered all six packet formats,
+malformed and wrong-source packets, sender isolation, duplicate freshness, stale
+clearing and pause. A mock SDK host exercised the compiled Linux plugin's callback
+registration, partial initialization cleanup, live/pause UDP output and restart.
+Qt and intercepted browser checks covered source dispatch, default-off output,
+BeamNG scaling and form persistence. Review found and corrected rejected-sender
+LED output. No live game or hardware access was used for validation.

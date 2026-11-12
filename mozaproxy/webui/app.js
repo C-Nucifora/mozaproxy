@@ -33,6 +33,7 @@ let profileGame = '';
 let deletingProfile = null;
 let editingProfile = null;
 let relayChoice = 'native';
+const telemetryForm = {source:'fh5',port:'20777',maximum_rpm:'8000',output:false};
 
 $('#navigation').innerHTML = routes.map(([id,label,path]) => `<a class="nav-link" href="#${id}" data-route="${id}"><svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg><span>${label}</span></a>`).join('');
 
@@ -455,7 +456,7 @@ document.addEventListener('submit',event=>{
 });
 
 function renderHardwareTools(){
- return `<section class="plain-section"><h2>Pedal calibration</h2><p>Stop driving first. Fully depress and release the pedal during seven seconds. Stop ends capture but does not restore old calibration.</p><form id="calibration-form"><label>Pedal <select name="pedal"><option>throttle</option><option>brake</option><option>clutch</option></select></label><label><input type="checkbox" name="idle" required> Driving is stopped; I am ready to calibrate</label><button class="button" data-mutation>Start calibration</button><button class="button" type="button" data-action="calibration-stop" data-mutation>Stop calibration</button></form><h2>FH5 telemetry</h2><p>Preview sends no device commands. Set FH5 Data Out to 127.0.0.1 and this port. LED output requires the local settings connection and supported readable RGB controls.</p><form id="telemetry-form"><label>UDP port <input type="number" name="port" min="1024" max="65535" value="20777" required></label><label><input type="checkbox" name="output"> Send RPM LEDs to the connected wheel</label><button class="button" data-mutation>Start telemetry</button><button class="button" type="button" data-action="telemetry-stop" data-mutation>Stop telemetry</button></form><pre class="log-view" id="hardware-tools-status"></pre><p><a href="https://support.mozaracing.com/en/support/solutions/articles/70000628053-downloads">Official MOZA firmware and recovery tools</a>. Firmware flashing and independent USB accessory configuration remain unavailable.</p></section>`;
+ return `<section class="plain-section"><h2>Pedal calibration</h2><p>Stop driving first. Fully depress and release the pedal during seven seconds. Stop ends capture but does not restore old calibration.</p><form id="calibration-form"><label>Pedal <select name="pedal"><option>throttle</option><option>brake</option><option>clutch</option></select></label><label><input type="checkbox" name="idle" required> Driving is stopped; I am ready to calibrate</label><button class="button" data-mutation>Start calibration</button><button class="button" type="button" data-action="calibration-stop" data-mutation>Stop calibration</button></form><h2>Telemetry lighting</h2><p>Preview sends no device commands. LMU, ACC and AC need the shared-memory helper; ETS2 needs the telemetry plugin. FH5 uses Data Out and BeamNG uses OutGauge. Send to 127.0.0.1 on this port. See docs/telemetry.md for setup. LED output requires the local settings connection and supported readable RGB controls.</p><form id="telemetry-form"><label class="form-field">Game <select name="source">${[['lmu','Le Mans Ultimate'],['acc','Assetto Corsa Competizione'],['ac','Assetto Corsa'],['beamng','BeamNG.drive'],['ets2','Euro Truck Simulator 2'],['fh5','Forza Horizon 5']].map(([id,label])=>`<option value="${id}" ${telemetryForm.source===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="form-field">BeamNG RPM scale, set for your vehicle <input type="number" name="maximum_rpm" min="100" max="100000" value="${escapeHTML(telemetryForm.maximum_rpm)}" ${telemetryForm.source==='beamng'?'':'disabled'} required></label><label class="form-field">UDP port <input type="number" name="port" min="1024" max="65535" value="${escapeHTML(telemetryForm.port)}" required></label><label><input type="checkbox" name="output" ${telemetryForm.output?'checked':''}> Send RPM LEDs to the connected wheel</label><div class="profile-actions"><button class="button" data-mutation>Start telemetry</button><button class="button" type="button" data-action="telemetry-stop" data-mutation>Stop telemetry</button></div></form><pre class="log-view" id="hardware-tools-status"></pre><p><a href="https://support.mozaracing.com/en/support/solutions/articles/70000628053-downloads">Official MOZA firmware and recovery tools</a>. Firmware flashing and independent USB accessory configuration remain unavailable.</p></section>`;
 }
 document.addEventListener('submit',event=>{
  if(event.target.id==='calibration-form'){
@@ -463,6 +464,13 @@ document.addEventListener('submit',event=>{
   mutate(()=>api('/api/calibration/start','POST',{pedal:data.get('pedal'),idle_confirmed:data.has('idle')}));
  } else if(event.target.id==='telemetry-form'){
   event.preventDefault();const data=new FormData(event.target);
-  mutate(()=>api('/api/telemetry/start','POST',{port:Number(data.get('port')),output:data.has('output')}));
+  mutate(()=>api('/api/telemetry/start','POST',{port:Number(data.get('port')),output:data.has('output'),source:data.get('source'),maximum_rpm:Number(data.get('maximum_rpm'))}));
  }
+});
+
+document.addEventListener('input', event=>{
+ const field=event.target;
+ if(field.form?.id!=='telemetry-form' || !own(telemetryForm,field.name))return;
+ telemetryForm[field.name]=field.type==='checkbox'?field.checked:field.value;
+ if(field.name==='source')field.form.elements.maximum_rpm.disabled=field.value!=='beamng';
 });

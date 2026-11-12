@@ -109,7 +109,7 @@ class Handler(BaseHTTPRequestHandler):
         elif self.command == 'POST' and path == '/api/hardware/disconnect':
             result = app.hardware.disconnect()
         elif self.command == 'POST' and path == '/api/telemetry/start':
-            result = app.telemetry.start(body.get('port', 20777), body.get('output', False))
+            result = app.telemetry.start(body.get('port', 20777), body.get('output', False), body.get('source', 'fh5'), body.get('maximum_rpm'))
         elif self.command == 'POST' and path == '/api/telemetry/stop':
             result = app.telemetry.stop()
         elif self.command == 'POST' and path == '/api/calibration/start':

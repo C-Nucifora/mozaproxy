@@ -189,3 +189,8 @@ capture. It creates a separate compact R9 device and never opens the physical
 wheel. Run `python tools/wheel-harness.py --help` for commands and limits.
 
 MIT license. See [LICENSE](LICENSE).
+
+## LMU menu force guard
+
+For pause-menu pulling on the R25 with the direct evdev path, see the
+opt-in [LMU stale-force guard](docs/lmu-pause.md). Physical verification is pending.

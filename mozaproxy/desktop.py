@@ -11,6 +11,7 @@ from PySide6.QtCore import QLockFile, QStandardPaths, Qt, QTimer
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QSpinBox,
     QStackedWidget,
     QTabWidget,
     QTreeWidget,
@@ -41,6 +43,7 @@ from .qt_widgets import InputBench, SettingRow, TorqueSettingRow
 from .game_mapping_editor import GameMappingEditor
 from .game_mappings import default_mapping
 from .desktop_theme import configure_desktop_plugins
+from .protection import DESCRIPTION, DETAIL, launcher_options
 
 
 def label(text="", wrap=False):
@@ -220,6 +223,37 @@ class MainWindow(QMainWindow):
         row.addWidget(self.relay_label)
         controls.addLayout(row)
         layout.addWidget(relay_box)
+        protection_box = QGroupBox('Wheel protection')
+        protection_layout = QVBoxLayout(protection_box)
+        self.menu_force_protection = QCheckBox('Menu force protection')
+        self.menu_force_protection.setToolTip(DESCRIPTION + ' ' + DETAIL)
+        self.menu_force_protection.clicked.connect(
+            lambda enabled: self._submit('menu-force-protection', lambda: self.backend.protection.save(enabled)))
+        protection_layout.addWidget(self.menu_force_protection)
+        timeout_row = QHBoxLayout()
+        timeout_label = QLabel('Force timeout')
+        self.menu_force_timeout = QSpinBox()
+        self.menu_force_timeout.setRange(50, 1000)
+        self.menu_force_timeout.setValue(100)
+        self.menu_force_timeout.setSuffix(' ms')
+        self.menu_force_timeout.setAccessibleName('Menu force protection timeout')
+        timeout_label.setBuddy(self.menu_force_timeout)
+        timeout_row.addWidget(timeout_label)
+        timeout_row.addWidget(self.menu_force_timeout)
+        timeout_row.addStretch()
+        self.menu_force_timeout.editingFinished.connect(self.save_force_timeout)
+        protection_layout.addLayout(timeout_row)
+        protection_layout.addWidget(label(DESCRIPTION + ' ' + DETAIL, True))
+        self.protection_error = label('', True)
+        protection_layout.addWidget(self.protection_error)
+        command = QLineEdit(launcher_options())
+        self.protection_command = command
+        command.setReadOnly(True)
+        command.setAccessibleName('Menu force protection Steam launch options')
+        protection_layout.addWidget(command)
+        protection_layout.addWidget(button('Copy protection launch options',
+                                           lambda: QApplication.clipboard().setText(command.text())))
+        layout.addWidget(protection_box)
         return page
 
     def _settings_tab(self, group):
@@ -411,6 +445,13 @@ class MainWindow(QMainWindow):
         device = state.get("device", {})
         hardware = state.get("hardware", {})
         relay = state.get("relay", {})
+        protection = state.get('protection', {})
+        self.menu_force_protection.setChecked(protection.get('enabled', False))
+        self.protection_command.setText(protection.get('launch_options', launcher_options()))
+        if not self.menu_force_timeout.hasFocus():
+            self.menu_force_timeout.setValue(protection.get('timeout_ms', 100))
+        self.protection_error.setText(protection.get('error') or '')
+        self.protection_error.setVisible(bool(protection.get('error')))
         system_mode = state.get("integration", {}).get("mode") == "system"
         if system_mode:
             self.relay_choice.setCurrentIndex(self.relay_choice.findData("compact"))
@@ -571,6 +612,8 @@ class MainWindow(QMainWindow):
             not busy and not self.invalid_fields and bool(self.profile_values())
         )
         self.relay_button.setEnabled(not busy and service_available)
+        self.menu_force_protection.setEnabled(not busy and not self.state.get('protection', {}).get('error'))
+        self.menu_force_timeout.setEnabled(not busy and not self.state.get('protection', {}).get('error'))
         self.relay_choice.setEnabled(
             not busy and not system_mode and not self.state.get("relay", {}).get("running")
         )
@@ -764,12 +807,22 @@ class MainWindow(QMainWindow):
     def apply_game_mapping(self, game_id):
         self._submit('apply-game-mapping', lambda: self.backend.apply_game_mapping(game_id))
 
+    def save_force_timeout(self):
+        timeout = self.menu_force_timeout.value()
+        if timeout != self.state.get('protection', {}).get('timeout_ms', 100):
+            self._submit('menu-force-timeout', lambda: self.backend.protection.save(
+                self.backend.protection.enabled(), timeout))
+
     def toggle_relay(self):
         if self.state.get("relay", {}).get("running"):
             self._submit("stop-relay", self.backend.relay.stop)
         else:
             data = {"profile": self.relay_choice.currentData()}
-            self._submit("start-relay", lambda: self.backend.relay.start(data))
+            def start():
+                if hasattr(self.backend, 'protection'):
+                    data.update(self.backend.protection.settings())
+                return self.backend.relay.start(data)
+            self._submit("start-relay", start)
 
     def export_diagnostics(self):
         if self.controller.closing:

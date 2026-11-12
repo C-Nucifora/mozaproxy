@@ -198,3 +198,15 @@ The MOZA settings catalogue uses protocol addresses and conversions documented
 by [Boxflat](https://github.com/Lawstorant/boxflat). It does not import Boxflat at
 runtime. See [hardware settings](docs/hardware-settings.md) for the source
 reference and implementation details. Vendor game libraries are not bundled.
+
+## Menu force protection
+
+An optional **Overview → Wheel protection → Menu force protection** toggle is
+intended for games whose menus cause a constant force-feedback pull. It expires
+stale constant force after a configurable timeout, default 100 ms, and applies
+on the next game or relay start. Increase the timeout if driving force cuts out.
+Direct games use the installed `mozaproxy-protect -- %command%` launcher.
+
+See [setup for ACC, LMU and other compatible games](docs/menu-force-protection.md).
+The option defaults off and currently supports the R25 evdev path. Physical
+pause/resume verification in ACC and LMU is pending; this is not a torque limit.

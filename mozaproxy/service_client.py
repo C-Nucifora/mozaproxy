@@ -11,6 +11,7 @@ import time
 
 from .app_state import AppState, ProfileStore, games
 from .settings import schema
+from .protection import ProtectionStore, timeout_ms
 
 DEFAULT_SOCKET = '/run/mozaproxy/control.sock'
 SYSTEM_CONFIG = Path('/etc/mozaproxy/system.json')
@@ -114,9 +115,16 @@ class RemoteRelay:
         self.client = client
 
     def start(self, data):
-        if data != {'profile': 'compact'}:
+        if data.get('profile') != 'compact' or set(data) - {'profile', 'menu_force_protection', 'menu_force_timeout_ms'}:
             raise ValueError('The system service uses a fixed compact R9 identity')
-        return self.client.call('relay_start')
+        params = {}
+        if 'menu_force_protection' in data:
+            if type(data['menu_force_protection']) is not bool:
+                raise ValueError('Menu force protection must be a boolean')
+            params['menu_force_protection'] = data['menu_force_protection']
+        if 'menu_force_timeout_ms' in data:
+            params['menu_force_timeout_ms'] = timeout_ms(data['menu_force_timeout_ms'])
+        return self.client.call('relay_start', params)
 
     def stop(self):
         return self.client.call('relay_stop')
@@ -131,6 +139,7 @@ class SystemAppState:
         self.profiles = ProfileStore(directory, schema_provider)
         from .app_state import GameMappingStore
         self.game_mappings = GameMappingStore(directory)
+        self.protection = ProtectionStore(directory)
         self.hardware = RemoteHardware(client)
         self.relay = RemoteRelay(client)
 
@@ -151,6 +160,7 @@ class SystemAppState:
         profiles, active = self.profiles.snapshot()
         state.update(profiles=profiles, active_profile=active)
         state.update(game_mappings=self.game_mappings.snapshot()[0], game_mapping_error=self.game_mappings.error)
+        state['protection'] = self.protection.snapshot()
         # Historical local-mode results do not validate a newly installed route.
         state['games'] = [dict(game, launch_options='', status='untested', input_status='untested',
                                ffb_status='untested', detail='Default route: direct physical wheel, relay off. Built-in game routing and this service setup still need validation; preserve any working manual game configuration.')

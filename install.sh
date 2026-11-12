@@ -23,6 +23,23 @@ cd "$project_dir"
 python3 -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.txt
 
+guard_dir="$HOME/.local/lib/mozaproxy"
+if command -v cc >/dev/null 2>&1; then
+    mkdir -p "$guard_dir"
+    guard_tmp=$(mktemp "$guard_dir/.menu-force-guard-XXXXXX.so")
+    if cc -shared -fPIC -O2 -Wall -Wextra -Werror -Wconversion -pthread \
+        tools/menu_force_guard.c -ldl -o "$guard_tmp"; then
+        chmod 755 "$guard_tmp"
+        mv "$guard_tmp" "$guard_dir/menu_force_guard.so"
+    else
+        rm -f "$guard_tmp"
+        echo "Could not build the optional menu force guard." >&2
+        exit 1
+    fi
+else
+    echo "No C compiler found. Direct-game menu force protection requires building tools/menu_force_guard.c." >&2
+fi
+
 ./.venv/bin/python - "$project_dir" <<'PY'
 import os
 import pathlib
@@ -59,6 +76,8 @@ def desktop_argument(value):
 
 command = f'exec {shlex.quote(str(root / ".venv/bin/python"))} {shlex.quote(str(root / "tools/open-desktop.py"))} "$@"'
 install_file(launcher, '#!/bin/sh\n' + command + '\n', 0o755)
+protect_command = f'exec {shlex.quote(str(root / ".venv/bin/python"))} {shlex.quote(str(root / "tools/protect-game.py"))} "$@"'
+install_file(pathlib.Path.home() / '.local/bin/mozaproxy-protect', '#!/bin/sh\n' + protect_command + '\n', 0o755)
 desktop = '\n'.join([
     '[Desktop Entry]',
     'Type=Application',

@@ -67,6 +67,10 @@ class Session:
 
     def __enter__(self):
         try:
+            protection = bool(getattr(self.args, 'menu_force_protection', False))
+            if protection and (self.real.info.vendor != 0x346e or self.real.info.product != 0
+                               or self.real.name != 'Gudsen MOZA R25 Ultra Base'):
+                raise ValueError('Menu force protection currently supports the R25 evdev path only')
             self.real.grab()
             self.grabbed = True
             mapping = getattr(self.args, 'mapping', None)
@@ -81,7 +85,8 @@ class Session:
                 bustype=e.BUS_USB, phys=f'mozaproxy/{profile.name}',
                 max_effects=min(capacity, e.FF_GAIN),
             )
-            self.effects = EffectRelay(self.real, self.virtual)
+            self.effects = EffectRelay(self.real, self.virtual, menu_force_protection=protection,
+                                       menu_force_timeout_ms=getattr(self.args, 'menu_force_timeout_ms', None) or 100)
             self.inputs = InputRelay(self.real, self.virtual, profile)
             self.inputs.sync_state()
             if mapping:

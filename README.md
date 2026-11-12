@@ -190,7 +190,14 @@ wheel. Run `python tools/wheel-harness.py --help` for commands and limits.
 
 MIT license. See [LICENSE](LICENSE).
 
-## LMU menu force guard
+## Menu force protection
 
-For pause-menu pulling on the R25 with the direct evdev path, see the
-opt-in [LMU stale-force guard](docs/lmu-pause.md). Physical verification is pending.
+An optional **Overview → Wheel protection → Menu force protection** toggle is
+intended for games whose menus cause a constant force-feedback pull. It expires
+stale constant force after a configurable timeout, default 100 ms, and applies
+on the next game or relay start. Increase the timeout if driving force cuts out.
+Direct games use the installed `mozaproxy-protect -- %command%` launcher.
+
+See [setup for ACC, LMU and other compatible games](docs/menu-force-protection.md).
+The option defaults off and currently supports the R25 evdev path. Physical
+pause/resume verification in ACC and LMU is pending; this is not a torque limit.

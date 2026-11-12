@@ -10,7 +10,7 @@ pulling. Disabling vendor-specific FFB did not resolve it. Setting evdev gain
 to zero released the wheel; restoring 5% gain with autocenter off reproduced
 the pull.
 
-`tools/lmu_ffb_guard.c` is an opt-in workaround for this streamed force. It
+`tools/menu_force_guard.c` is an opt-in workaround for this streamed force. It
 replaces an infinite constant effect with a 50 ms effect and renews playback
 when the game updates an effect it has started. Once updates cease, the last
 force expires. Stop and erase requests prevent renewal. The caller's effect
@@ -21,31 +21,12 @@ Only USB identity `346e:0000` with the exact evdev name
 effects, envelopes, other effect types and other devices pass through. It does
 not change bindings, firmware, gain or the physical device's descriptor.
 
-## Build and use
+## Shared protection option
 
-Requires Linux x86-64, a C compiler and the normal evdev force-feedback path.
-
-```sh
-mkdir -p "$HOME/.local/lib/mozaproxy"
-cc -shared -fPIC -O2 -Wall -Wextra -Werror -Wconversion -pthread \
-  tools/lmu_ffb_guard.c -ldl \
-  -o "$HOME/.local/lib/mozaproxy/lmu_ffb_guard.so"
-```
-
-For this workstation, use these Steam launch options for verification:
-
-```text
-PROTON_USE_EAC_LINUX=1 PROTON_ENABLE_WAYLAND=1 PROTON_LOG=1 WINEDEBUG=-all,+dinput LD_PRELOAD=/home/christian/.local/lib/mozaproxy/lmu_ffb_guard.so %command%
-```
-
-Restart LMU with the base's hardware torque reduced. The Proton log should
-contain `lmu_ffb_guard: R25 streamed constant force expires after 50 ms` when
-the first effect is uploaded. Verify driving feedback, pause, resume, and
-returning to the garage before increasing torque. Remove `PROTON_LOG=1` and
-`WINEDEBUG=-all,+dinput` after verification to stop the verbose capture.
-
-Remove the `LD_PRELOAD=...` assignment and restart LMU to undo the workaround.
-Never preload the helper globally or use it for another game.
+The guard is now shared with ACC and other compatible games. Use the
+[Menu force protection toggle and launcher](menu-force-protection.md).
+The source is `tools/menu_force_guard.c`; the original installed
+`lmu_ffb_guard.so` is retained for existing launch options until they are migrated.
 
 ## Limits and checks
 

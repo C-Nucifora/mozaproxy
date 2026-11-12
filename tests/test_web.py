@@ -153,7 +153,7 @@ class WebTests(unittest.TestCase):
         status, state = self.request('GET', '/api/state')
         self.assertEqual(status, 200)
         self.assertFalse(state['relay']['running'])
-        self.assertEqual({g['id'] for g in state['games']}, {'fh5','jdm','fs22','fs25','ac','acc','heat','beamng','ets2'})
+        self.assertEqual({g['id'] for g in state['games']}, {'fh5','jdm','fs22','fs25','ac','acc','lmu','heat','beamng','ets2'})
         games = {g['id']: g for g in state['games']}
         for game_id in ('fh5', 'jdm'):
             for field in ('status', 'input_status', 'ffb_status'):

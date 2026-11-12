@@ -112,7 +112,9 @@ class Handler(BaseHTTPRequestHandler):
             settings = validate_settings(body.get('settings'), app.schema_provider())
             result = app.hardware.apply(settings)
         elif self.command == 'POST' and path == '/api/relay/start':
-            result = app.relay.start(body)
+            result = app.relay.start(dict(body, **app.protection.settings()))
+        elif self.command == 'POST' and path == '/api/protection':
+            result = app.protection.save(body.get('enabled'), body.get('timeout_ms'))
         elif self.command == 'POST' and path == '/api/relay/stop':
             result = app.relay.stop()
         else:

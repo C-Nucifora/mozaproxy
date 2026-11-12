@@ -19,6 +19,7 @@ import threading
 import time
 
 from .app_state import PassiveMonitor, RelayProcess, UnavailableHardware, validate_settings
+from .protection import timeout_ms
 
 
 DEFAULT_SOCKET = '/run/mozaproxy/control.sock'
@@ -59,7 +60,14 @@ class ServiceBackend:
         if not isinstance(params, dict):
             raise ValueError('Params must be an object')
         expected = {'settings'} if method == 'hardware_apply' else set()
-        if set(params) != expected:
+        if method == 'relay_start' and set(params) <= {'menu_force_protection', 'menu_force_timeout_ms'}:
+            if 'menu_force_protection' in params and type(params['menu_force_protection']) is not bool:
+                raise ValueError('Menu force protection must be a boolean')
+            if 'menu_force_timeout_ms' in params:
+                if type(params['menu_force_timeout_ms']) is not int:
+                    raise ValueError('Force timeout must be an integer')
+                timeout_ms(params['menu_force_timeout_ms'])
+        elif set(params) != expected:
             raise ValueError('Unexpected method parameters')
         if not self.lock.acquire(timeout=1):
             raise ValueError('Service is busy; retry shortly')
@@ -78,7 +86,8 @@ class ServiceBackend:
             if method == 'relay_start':
                 # Repeated UI actions must not recreate the virtual device.
                 current = self.relay.status()
-                return self.relay_status(current if current['running'] else self.relay.start(dict(RELAY_IDENTITY)))
+                return self.relay_status(current if current['running'] else self.relay.start(
+                    dict(RELAY_IDENTITY, **params)))
             if method == 'relay_stop':
                 return self.relay_status(self.relay.stop())
             if method == 'hardware_connect':

@@ -17,12 +17,13 @@ from types import SimpleNamespace
 import uuid
 
 from .game_mappings import default_mapping, validate_mapping, write_mapping_document
+from .protection import ProtectionStore, launcher_options, timeout_ms
 
 ROOT = Path(__file__).resolve().parent.parent
-GAME_IDS = {'fh5', 'jdm', 'fs22', 'fs25', 'ac', 'acc', 'heat', 'beamng', 'ets2'}
+GAME_IDS = {'fh5', 'jdm', 'fs22', 'fs25', 'ac', 'acc', 'lmu', 'heat', 'beamng', 'ets2'}
 
 
-def games():
+def games(data_dir=None):
     isolation = shlex.join([sys.executable, str(ROOT / 'tools/run-game.py'), '--']) + ' %command%'
     jdm = shlex.join([
         'DISABLE_LSFGVK=1', 'PROTON_LOG=1', 'WINEDEBUG=-all',
@@ -38,7 +39,8 @@ def games():
         ('fs22', 'Farming Simulator 22', 'FS22', 'untested', 'Not tested with the rebuilt relay. Input and physical FFB need a driving test.', '%command%', 'untested', 'untested'),
         ('fs25', 'Farming Simulator 25', 'FS25', 'untested', 'Not tested with the rebuilt relay. Input and physical FFB need a driving test.', '%command%', 'untested', 'untested'),
         ('ac', 'Assetto Corsa', 'AC', 'untested', 'Keep the native device path. Direct-path regression test pending; no relay required by this setup.', '%command%', 'untested', 'untested'),
-        ('acc', 'Assetto Corsa Competizione', 'ACC', 'untested', 'Keep the native device path. Direct-path regression test pending; no relay required by this setup.', '%command%', 'untested', 'untested'),
+        ('acc', 'Assetto Corsa Competizione', 'ACC', 'untested', 'Direct physical wheel; keep the relay stopped. The launch helper follows the Menu force protection toggle. Driving and pause/resume validation are pending.', launcher_options(data_dir), 'untested', 'untested'),
+        ('lmu', 'Le Mans Ultimate', 'LMU', 'partial', 'The captured pause transition stops constant-force updates without stopping the effect. Menu force protection bounds that stale force. Physical pause/resume validation is pending.', 'PROTON_USE_EAC_LINUX=1 PROTON_ENABLE_WAYLAND=1 ' + launcher_options(data_dir), 'confirmed', 'untested'),
     ]
     fields = ('id', 'name', 'abbr', 'status', 'detail', 'launch_options', 'input_status', 'ffb_status')
     return [dict(zip(fields, row)) for row in rows]
@@ -308,6 +310,12 @@ class RelayProcess:
             process.stdout.close()
 
     def start(self, data):
+        protection = data.get('menu_force_protection')
+        if protection is not None and type(protection) is not bool:
+            raise ValueError('Menu force protection must be a boolean')
+        timeout = data.get('menu_force_timeout_ms')
+        if timeout is not None:
+            timeout = timeout_ms(timeout)
         mapping = validate_mapping(data['mapping']) if 'mapping' in data else None
         if mapping is not None and mapping['target'] == 'direct':
             raise ValueError('A direct configuration does not create a relay')
@@ -342,6 +350,10 @@ class RelayProcess:
                 command = [sys.executable, '-m', 'mozaproxy', '--mapping-file', self.mapping_file]
             elif profile == 'g920':
                 command = [sys.executable, '-m', 'mozaproxy', '--profile', 'g920']
+            if protection is not None:
+                command.append('--menu-force-protection' if protection else '--no-menu-force-protection')
+            if timeout is not None:
+                command.extend(['--menu-force-timeout-ms', str(timeout)])
             try:
                 process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL,
                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -427,6 +439,7 @@ class AppState:
         directory = Path(data_dir) if data_dir is not None else Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'mozaproxy'
         self.profiles = ProfileStore(directory, self.schema_provider)
         self.game_mappings = GameMappingStore(directory)
+        self.protection = ProtectionStore(directory)
         self.monitor = monitor if monitor is not None else PassiveMonitor()
         self.relay = relay if relay is not None else RelayProcess()
 
@@ -451,16 +464,17 @@ class AppState:
             if self.profiles.error:
                 diagnostics.append({'label': 'Profile storage', 'status': 'error', 'detail': self.profiles.error})
             return {'device': device, 'relay': relay, 'hardware': hardware, 'profiles': profiles,
-                    'active_profile': active, 'games': games(),
+                    'active_profile': active, 'games': games(self.protection.path.parent),
                     'game_mappings': self.game_mappings.snapshot()[0],
                     'game_mapping_error': self.game_mappings.error,
+                    'protection': self.protection.snapshot(),
                     'diagnostics': {'items': diagnostics}}
 
     def start_game_mapping(self, game_id):
         mapping = self.game_mappings.get(game_id)
         if mapping['target'] == 'direct':
             raise ValueError('This game uses direct physical access; leave the relay stopped')
-        return self.relay.start({'mapping': mapping})
+        return self.relay.start(dict(mapping=mapping, **self.protection.settings()))
 
     def apply_game_mapping(self, game_id):
         return self.relay.apply_mapping(self.game_mappings.get(game_id))

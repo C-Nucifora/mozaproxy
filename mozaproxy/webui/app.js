@@ -79,7 +79,7 @@ function setOnline(value, message = '') {
 }
 function signature() {
   if (!state) return '';
-  return JSON.stringify({connected:state.device?.connected, axes:(state.device?.axes || []).map(a=>[a.code,a.label]), buttons:(state.device?.buttons || []).map(b=>b.code), hardware:[state.hardware?.connected,state.hardware?.port,state.hardware?.conflict,state.hardware?.error], relay:[state.relay?.running,state.relay?.profile], profiles:state.profiles, active:state.active_profile, games:state.games, diagnostics:state.diagnostics?.items});
+  return JSON.stringify({connected:state.device?.connected, axes:(state.device?.axes || []).map(a=>[a.code,a.label]), buttons:(state.device?.buttons || []).map(b=>b.code), hardware:[state.hardware?.connected,state.hardware?.port,state.hardware?.conflict,state.hardware?.error], relay:[state.relay?.running,state.relay?.profile], profiles:state.profiles, active:state.active_profile, protection:state.protection, games:state.games, diagnostics:state.diagnostics?.items});
 }
 async function poll() {
   if (polling) return;
@@ -137,7 +137,11 @@ function renderOverview() {
   const active = (state.profiles || []).find(p=>p.id===state.active_profile);
   return heading('Overview', 'Your wheel, inputs and driving setup.', `<a class="button" href="#wheelbase">Tune wheelbase <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 13 13 3M4 3h9v9"/></svg></a>`) +
     `<div class="overview-bench"><section class="steering-panel" aria-labelledby="steering-title"><div class="section-title"><h2 id="steering-title">Steering</h2><span class="section-note" id="steering-range">Range not read</span></div><div class="steering-stage unavailable" id="steering-stage"><span class="dial-mark dial-left">LEFT</span><span class="dial-mark dial-center">CENTER</span><span class="dial-mark dial-right">RIGHT</span><img src="/wheel.svg" alt="Steering wheel position" class="wheel-face" id="wheel-face" width="280" height="280"></div><div class="steering-measure"><span class="measurement" id="steering-value" data-live>—</span><span class="measurement-unit" id="steering-unit">position</span></div><p class="steering-hint" id="steering-hint">Waiting for wheel input</p></section><section class="pedal-panel" aria-labelledby="pedal-title"><div class="section-title"><h2 id="pedal-title">Pedal travel</h2><a href="#controls" class="section-link">All inputs</a></div>${pedalDisplay()}</section><div class="bench-footer"><span><span class="status-dot" id="input-dot"></span><span id="input-status">Waiting for device</span></span><span>Input monitor · no motor output</span></div></div>
-    <div class="overview-lower"><section><div class="section-heading"><h2>Device connection</h2><a class="section-link" href="#diagnostics">Diagnostics</a></div><dl class="detail-list"><div><dt>Input device</dt><dd id="overview-device">${escapeHTML(state.device?.name || 'Not detected')}</dd></div><div><dt>Hardware settings</dt><dd>${badge(hardware.connected ? 'Connected' : 'Not connected',hardware.connected?'good':'')}</dd></div><div><dt>Force feedback</dt><dd>${escapeHTML((state.device?.effects || []).length ? `${state.device.effects.length} FFB capabilities` : 'No capabilities read')}</dd></div><div><dt>Selected profile</dt><dd>${escapeHTML(active?.name || 'None selected')}</dd></div></dl><p class="inline-note">Read hardware settings before tuning. Selecting a profile prepares values; Apply writes them to the device.</p></section><section><div class="section-heading"><h2>Game relay</h2>${badge(state.relay?.running?'Running':'Stopped',state.relay?.running?'good':'')}</div><p class="inline-note">Both options create a virtual input device. Keep the relay stopped for direct Assetto Corsa and ACC use.</p>${relayForm()}<p class="inline-note">Check <a href="#games">game compatibility</a> before choosing a route.</p></section></div>`;
+    <div class="overview-lower"><section><div class="section-heading"><h2>Device connection</h2><a class="section-link" href="#diagnostics">Diagnostics</a></div><dl class="detail-list"><div><dt>Input device</dt><dd id="overview-device">${escapeHTML(state.device?.name || 'Not detected')}</dd></div><div><dt>Hardware settings</dt><dd>${badge(hardware.connected ? 'Connected' : 'Not connected',hardware.connected?'good':'')}</dd></div><div><dt>Force feedback</dt><dd>${escapeHTML((state.device?.effects || []).length ? `${state.device.effects.length} FFB capabilities` : 'No capabilities read')}</dd></div><div><dt>Selected profile</dt><dd>${escapeHTML(active?.name || 'None selected')}</dd></div></dl><p class="inline-note">Read hardware settings before tuning. Selecting a profile prepares values; Apply writes them to the device.</p></section><section><div class="section-heading"><h2>Game relay</h2>${badge(state.relay?.running?'Running':'Stopped',state.relay?.running?'good':'')}</div><p class="inline-note">Both options create a virtual input device. Keep the relay stopped for direct Assetto Corsa and ACC use.</p>${relayForm()}<p class="inline-note">Check <a href="#games">game compatibility</a> before choosing a route.</p></section></div>` + renderProtection();
+}
+function renderProtection() {
+  const protection=state.protection || {};
+  return `<section aria-labelledby="protection-title"><div class="section-heading"><h2 id="protection-title">Wheel protection</h2></div><label><input id="menu-force-protection" type="checkbox" data-mutation data-empty="${Boolean(protection.error)}" ${protection.enabled?'checked':''} ${protection.error?'disabled':''} aria-describedby="protection-description"> Menu force protection</label><p><label for="menu-force-timeout">Force timeout (ms)</label> <input id="menu-force-timeout" type="number" min="50" max="1000" step="1" value="${protection.timeout_ms || 100}" data-mutation data-empty="${Boolean(protection.error)}" ${protection.error?'disabled':''} aria-describedby="protection-description"></p><p id="protection-description" class="inline-note">${escapeHTML(protection.description || '')} ${escapeHTML(protection.detail || '')}</p>${protection.error?`<p role="alert">${escapeHTML(protection.error)}</p>`:''}<p class="inline-note">Steam launch options for direct-wheel games. Preserve any existing game flags.</p><pre>${escapeHTML(protection.launch_options || '')}</pre></section>`;
 }
 function relayForm() {
   const running = state.relay?.running;
@@ -313,6 +317,15 @@ document.addEventListener('input',event=>{
   if(event.target.id==='profile-name')profileName=event.target.value;
 });
 document.addEventListener('change',event=>{
+  if(event.target.id==='menu-force-protection') {
+    const enabled=event.target.checked;
+    mutate(()=>api('/api/protection','POST',{enabled}));
+  }
+  if(event.target.id==='menu-force-timeout') {
+    if(!event.target.checkValidity()) {event.target.reportValidity();return;}
+    const timeout_ms=Number(event.target.value);
+    mutate(()=>api('/api/protection','POST',{enabled:Boolean(state.protection?.enabled),timeout_ms}));
+  }
   if(event.target.matches('select[data-setting]'))recordSetting(event.target);
   if(event.target.id==='profile-game')profileGame=event.target.value;
   if(event.target.id==='relay-profile')relayChoice=event.target.value;

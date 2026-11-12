@@ -11,6 +11,7 @@ from evdev import ecodes as e
 from .profiles import make_profile
 from .game_mappings import load_mapping, compile_mapping, G920_IDENTITY
 from .runtime import find_device, supervise
+from .protection import ProtectionStore, timeout_ms
 
 
 def usb_id(value):
@@ -33,6 +34,10 @@ def parse_args(argv=None):
     parser.add_argument('--product-real', type=usb_id, default=0)
     parser.add_argument('--name-hint', help='Additional name filter; never overrides physical IDs')
     parser.add_argument('--once', action='store_true', help='Exit on missing wheel or session failure')
+    parser.add_argument('--menu-force-protection', action=argparse.BooleanOptionalAction,
+                        default=None, help='Expire stale constant force in game menus; defaults to the saved toggle')
+    parser.add_argument('--menu-force-timeout-ms', type=timeout_ms,
+                        help='Stale-force timeout, 50–1000 ms; defaults to the saved value or 100')
     parser.add_argument('--diagnose', action='store_true', help='Print capabilities and mapping without grabbing')
     parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args(argv)
@@ -84,6 +89,16 @@ def diagnose(args):
 
 def main(argv=None):
     args = parse_args(argv)
+    if args.menu_force_protection is None or args.menu_force_timeout_ms is None:
+        try:
+            settings = ProtectionStore().settings()
+            if args.menu_force_protection is None:
+                args.menu_force_protection = settings['menu_force_protection']
+            if args.menu_force_timeout_ms is None:
+                args.menu_force_timeout_ms = settings['menu_force_timeout_ms']
+        except (OSError, ValueError) as exc:
+            logging.error('Could not load menu force protection: %s', exc)
+            return 1
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format='%(asctime)s %(levelname)s %(name)s: %(message)s')
     if args.diagnose:

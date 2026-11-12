@@ -1,7 +1,7 @@
-/* LMU-only evdev workaround: expire streamed constant force between updates.
+/* Opt-in R25 evdev workaround: expire streamed constant force between updates.
  * Build: cc -shared -fPIC -O2 -Wall -Wextra -Werror -pthread \
- *           tools/lmu_ffb_guard.c -ldl -o lmu_ffb_guard.so
- * Load only for LMU, never globally. See docs/lmu-pause.md.
+ *           tools/menu_force_guard.c -ldl -o menu_force_guard.so
+ * Load only for selected games, never globally. See docs/menu-force-protection.md.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -18,7 +18,7 @@
 #include <unistd.h>
 
 #define GUARDED_FDS 4096
-#define FORCE_LIFETIME_MS 50
+static unsigned short force_lifetime_ms = 100;
 
 static int (*next_ioctl)(int, unsigned long, ...);
 static ssize_t (*next_write)(int, const void *, size_t);
@@ -55,6 +55,18 @@ static void resolve(void)
     next_write = dlsym(RTLD_NEXT, "write");
     next_close = dlsym(RTLD_NEXT, "close");
     if (!next_ioctl || !next_write || !next_close) _exit(127);
+    const char *setting = getenv("MOZAPROXY_MENU_FORCE_TIMEOUT_MS");
+    if (setting) {
+        char *end;
+        errno = 0;
+        unsigned long value = strtoul(setting, &end, 10);
+        if (errno || !*setting || *end || value < 50 || value > 1000) {
+            const char msg[] = "menu_force_guard: timeout must be 50 to 1000 ms\n";
+            next_write(STDERR_FILENO, msg, sizeof(msg) - 1);
+            _exit(2);
+        }
+        force_lifetime_ms = (unsigned short)value;
+    }
     if (pthread_atfork(before_fork, after_fork, after_fork)) _exit(127);
 }
 
@@ -93,8 +105,9 @@ static bool is_target(int fd)
         if (devices[fd].target) {
             devices[fd].device = st.st_dev;
             devices[fd].inode = st.st_ino;
-            const char msg[] = "lmu_ffb_guard: R25 streamed constant force expires after 50 ms\n";
-            next_write(STDERR_FILENO, msg, sizeof(msg) - 1);
+            char msg[128];
+            int length = snprintf(msg, sizeof(msg), "menu_force_guard: R25 streamed constant force expires after %u ms\n", force_lifetime_ms);
+            if (length > 0 && (size_t)length < sizeof(msg)) next_write(STDERR_FILENO, msg, (size_t)length);
         }
     }
     return devices[fd].target;
@@ -125,13 +138,13 @@ int ioctl(int fd, unsigned long request, ...)
             !effect.u.constant.envelope.attack_length &&
             !effect.u.constant.envelope.fade_length;
         bool updating = effect.id >= 0 && effect.id < FF_MAX_EFFECTS;
-        if (guarded) effect.replay.length = FORCE_LIFETIME_MS;
+        if (guarded) effect.replay.length = force_lifetime_ms;
         result = next_ioctl(fd, request, &effect);
         if (result >= 0 && effect.id >= 0 && effect.id < FF_MAX_EFFECTS) {
             original->id = effect.id;
             devices[fd].guarded[effect.id] = guarded;
             if (guarded && !devices[fd].announced) {
-                const char msg[] = "lmu_ffb_guard: bounded constant effect uploaded successfully\n";
+                const char msg[] = "menu_force_guard: bounded constant effect uploaded successfully\n";
                 next_write(STDERR_FILENO, msg, sizeof(msg) - 1);
                 devices[fd].announced = true;
             }

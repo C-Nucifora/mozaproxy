@@ -1,7 +1,7 @@
 """Game setup and attended results, using the existing serialized UI controller."""
 import json
 from PySide6.QtCore import QSignalBlocker
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QCheckBox, QComboBox, QLineEdit, QPlainTextEdit, QPushButton, QLabel
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QCheckBox, QComboBox, QLineEdit, QPlainTextEdit, QGroupBox, QPushButton, QLabel
 from .game_setup import CHECKS, RESULTS, preflight
 
 
@@ -18,7 +18,9 @@ class GameSetupPanel(QWidget):
         note = QLabel('Automatic Apply is off by default and also requires permission for each game. Use the desktop app or optional mozaproxy-games user service before launching the game. Busy or disconnected settings and unsaved edits skip that launch. Steam options and relay starts remain manual.')
         note.setWordWrap(True)
         layout.addWidget(note)
-        form = QFormLayout()
+        link_box = QGroupBox("Profile on game launch")
+        form = QFormLayout(link_box)
+        layout.addWidget(link_box)
         self.profile = QComboBox()
         form.addRow('Linked profile', self.profile)
         self.game_auto = QCheckBox('Allow automatic Apply for this game')
@@ -26,6 +28,9 @@ class GameSetupPanel(QWidget):
         save = QPushButton('Save game link')
         save.clicked.connect(lambda: self.save(dict(game_id=self.game, profile_id=self.profile.currentData(), game_automatic=self.game_auto.isChecked())))
         form.addRow(save)
+        record_box = QGroupBox("Attended test record")
+        form = QFormLayout(record_box)
+        layout.addWidget(record_box)
         self.fields = {}
         for key, title in [('route', 'Input route'), ('runtime', 'Proton or native version'), ('wheel', 'Wheel / firmware')]:
             editor = QLineEdit()
@@ -43,9 +48,9 @@ class GameSetupPanel(QWidget):
         record = QPushButton('Record attended test result')
         record.clicked.connect(self.record)
         form.addRow(record)
-        layout.addLayout(form)
         self.report = QPlainTextEdit()
         self.report.setReadOnly(True)
+        self.report.setMinimumHeight(160)
         self.report.setAccessibleName('Game prerequisites and recorded evidence')
         layout.addWidget(self.report)
 

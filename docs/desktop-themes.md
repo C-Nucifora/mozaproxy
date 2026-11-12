@@ -1,6 +1,9 @@
 # Desktop theme integration
 
-Mozaproxy uses the desktop's native Qt palette, font and widget style. On a
+Mozaproxy uses the desktop's native Qt palette, font and widget style for its
+working surfaces. The visual overhaul adds a fixed ink-blue navigation rail and
+blue Apply/red Stop accents through window-local styling; these accents do not
+change the desktop theme. On a
 desktop configured with `QT_QPA_PLATFORMTHEME=qt6ct`, it follows the selected
 qt6ct colour scheme and icon theme. Changes made through qt6ct update an open
 app through the native plugin, without restarting the app or losing drafts.

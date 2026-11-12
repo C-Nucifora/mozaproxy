@@ -1,7 +1,7 @@
 """Explicit calibration and telemetry controls, separate from saved profiles."""
 import json
 from .telemetry import SOURCES
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox, QPlainTextEdit, QMessageBox
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox, QPlainTextEdit, QMessageBox, QGroupBox, QHBoxLayout
 
 
 class HardwareToolsPanel(QWidget):
@@ -9,19 +9,31 @@ class HardwareToolsPanel(QWidget):
         super().__init__()
         self.owner = owner
         layout = QVBoxLayout(self)
+        layout.setSpacing(18)
+        calibration = QGroupBox("Pedal calibration")
+        calibration_layout = QVBoxLayout(calibration)
+        layout.addWidget(calibration)
         note = QLabel('Pedal calibration changes the learned range. Stop driving first. Fully depress and release the selected pedal during the seven-second window. Stop ends capture; it does not restore the old calibration.')
         note.setWordWrap(True)
-        layout.addWidget(note)
+        calibration_layout.addWidget(note)
         form = QFormLayout()
         self.pedal = QComboBox()
         self.pedal.addItems(['throttle', 'brake', 'clutch'])
         form.addRow('Base-connected pedal', self.pedal)
         self.start_calibration = QPushButton('Start seven-second calibration…')
         self.start_calibration.clicked.connect(self.calibrate)
-        form.addRow(self.start_calibration)
+        calibration_actions = QHBoxLayout()
+        calibration_actions.addWidget(self.start_calibration)
         self.stop_calibration = QPushButton('Stop calibration')
         self.stop_calibration.clicked.connect(lambda: owner._submit('calibration-stop', owner.backend.hardware.calibration_stop))
-        form.addRow(self.stop_calibration)
+        self.stop_calibration.setObjectName("stopAction")
+        calibration_actions.addWidget(self.stop_calibration)
+        form.addRow(calibration_actions)
+        calibration_layout.addLayout(form)
+        telemetry = QGroupBox("Telemetry lighting")
+        telemetry_layout = QVBoxLayout(telemetry)
+        layout.addWidget(telemetry)
+        form = QFormLayout()
         self.source = QComboBox()
         for key, label in SOURCES.items():
             self.source.addItem(label, key)
@@ -41,20 +53,24 @@ class HardwareToolsPanel(QWidget):
         form.addRow(self.output)
         self.start_telemetry = QPushButton('Start telemetry')
         self.start_telemetry.clicked.connect(self.telemetry)
-        form.addRow(self.start_telemetry)
+        telemetry_actions = QHBoxLayout()
+        telemetry_actions.addWidget(self.start_telemetry)
         self.stop_telemetry = QPushButton('Stop telemetry')
         self.stop_telemetry.clicked.connect(lambda: owner._submit('telemetry-stop', owner.backend.telemetry.stop))
-        form.addRow(self.stop_telemetry)
-        layout.addLayout(form)
+        self.stop_telemetry.setObjectName("stopAction")
+        telemetry_actions.addWidget(self.stop_telemetry)
+        form.addRow(telemetry_actions)
+        telemetry_layout.addLayout(form)
         note = QLabel('Preview is the default and sends no device commands. LMU, ACC and AC require the shared-memory helper in the game’s Proton context. ETS2 requires the telemetry plugin. FH5 uses Data Out; BeamNG uses OutGauge and the RPM scale above. Send to 127.0.0.1 on this port. See docs/telemetry.md for setup. Stale data clears the LEDs after 0.5 seconds. The bar uses reported maximum RPM or your BeamNG scale, not a verified shift point. LED output requires the local connection and readable newer wheel RGB controls.')
         note.setWordWrap(True)
-        layout.addWidget(note)
+        telemetry_layout.addWidget(note)
         firmware = QLabel('<a href="https://support.mozaracing.com/en/support/solutions/articles/70000628053-downloads">Official MOZA firmware and recovery tools</a><br>Firmware flashing and independent USB accessory configuration are not implemented. No supported flashing/recovery protocol has been established here.')
         firmware.setWordWrap(True)
         firmware.setOpenExternalLinks(True)
         layout.addWidget(firmware)
         self.status = QPlainTextEdit()
         self.status.setReadOnly(True)
+        self.status.setMinimumHeight(160)
         self.status.setAccessibleName('Calibration and telemetry status')
         layout.addWidget(self.status)
 

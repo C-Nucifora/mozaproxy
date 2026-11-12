@@ -47,6 +47,7 @@ from .hardware_tools_ui import HardwareToolsPanel
 from .game_service import owner_lock, write_status
 from .game_mappings import default_mapping
 from .desktop_theme import configure_desktop_plugins
+from .desktop_style import STYLE
 from .protection import DESCRIPTION, DETAIL, launcher_options
 
 
@@ -100,6 +101,7 @@ class MainWindow(QMainWindow):
         self.resize(1180, 820)
         self.setWindowIcon(QIcon(str(Path(__file__).parent / "webui/wheel.svg")))
         self._build()
+        self.setStyleSheet(STYLE)
         self.controller.snapshot_ready.connect(self.update_state)
         self.controller.operation_done.connect(self._operation_done)
         self.controller.failed.connect(self._operation_failed)
@@ -119,10 +121,21 @@ class MainWindow(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         horizontal = QHBoxLayout(root)
-        horizontal.setContentsMargins(12, 12, 12, 12)
+        horizontal.setContentsMargins(14, 14, 14, 14)
+        horizontal.setSpacing(22)
+        rail = QWidget()
+        rail.setObjectName("navigationRail")
+        rail.setFixedWidth(184)
+        rail_layout = QVBoxLayout(rail)
+        brand = label("mozaproxy")
+        brand.setObjectName("brand")
+        caption = label("Wheel control")
+        caption.setObjectName("brandCaption")
+        rail_layout.addWidget(brand)
+        rail_layout.addWidget(caption)
         self.navigation = QListWidget()
-        self.navigation.setFixedWidth(175)
-        self.navigation.setSpacing(5)
+        self.navigation.setObjectName("navigation")
+        self.navigation.setSpacing(3)
         self.navigation.setAccessibleName("App sections")
         self.navigation.addItems(
             [
@@ -134,10 +147,13 @@ class MainWindow(QMainWindow):
                 "Diagnostics",
             ]
         )
-        horizontal.addWidget(self.navigation)
+        rail_layout.addWidget(self.navigation, 1)
+        horizontal.addWidget(rail)
         right = QVBoxLayout()
+        right.setSpacing(9)
         horizontal.addLayout(right, 1)
         self.device_label = label("Looking for wheelbase…")
+        self.device_label.setObjectName("deviceTitle")
         font = self.device_label.font()
         font.setBold(True)
         font.setPointSize(font.pointSize() + 2)
@@ -161,11 +177,15 @@ class MainWindow(QMainWindow):
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.navigation.setCurrentRow(0)
         self.feedback = label("Ready. Connect settings to read the device.", True)
+        self.feedback.setObjectName("feedback")
         self.feedback.setAccessibleName("Operation result")
         right.addWidget(self.feedback)
         self.hardware_label = label("Settings disconnected", True)
         right.addWidget(self.hardware_label)
-        actions = QHBoxLayout()
+        shelf = QWidget()
+        shelf.setObjectName("actionShelf")
+        actions = QHBoxLayout(shelf)
+        actions.setContentsMargins(0, 12, 0, 0)
         self.connect_button = button("Connect settings", self.connect_hardware)
         self.disconnect_button = button(
             "Disconnect",
@@ -179,8 +199,9 @@ class MainWindow(QMainWindow):
         self.discard_button = button("Discard", self.discard)
         self.apply_button = button("Apply to device", self.apply)
         actions.addWidget(self.discard_button)
+        self.apply_button.setObjectName("applyAction")
         actions.addWidget(self.apply_button)
-        right.addLayout(actions)
+        right.addWidget(shelf)
         menu = self.menuBar().addMenu("&File")
         export_action = QAction("Export diagnostics…", self)
         export_action.triggered.connect(self.export_diagnostics)
@@ -202,13 +223,18 @@ class MainWindow(QMainWindow):
     def _page(self, title, description):
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(12)
         heading = label(title)
+        heading.setObjectName("pageTitle")
         font = heading.font()
         font.setPointSize(font.pointSize() + 5)
         font.setBold(True)
         heading.setFont(font)
         layout.addWidget(heading)
-        layout.addWidget(label(description, True))
+        description_label = label(description, True)
+        description_label.setObjectName("pageDescription")
+        layout.addWidget(description_label)
         return page, layout
 
     def _overview(self):
@@ -217,6 +243,7 @@ class MainWindow(QMainWindow):
             "Live inputs from your wheel. Settings and the game relay are controlled separately.",
         )
         self.bench = InputBench()
+        self.bench.setMinimumHeight(220)
         layout.addWidget(self.bench, 1)
         relay_box = QGroupBox("Game relay")
         controls = QVBoxLayout(relay_box)
@@ -233,7 +260,7 @@ class MainWindow(QMainWindow):
         self.relay_label = label("Stopped")
         row.addWidget(self.relay_label)
         controls.addLayout(row)
-        layout.addWidget(relay_box)
+        layout.insertWidget(2, relay_box)
         protection_box = QGroupBox('Wheel protection')
         protection_layout = QVBoxLayout(protection_box)
         self.menu_force_protection = QCheckBox('Menu force protection')
@@ -265,7 +292,11 @@ class MainWindow(QMainWindow):
         protection_layout.addWidget(button('Copy protection launch options',
                                            lambda: QApplication.clipboard().setText(command.text())))
         layout.addWidget(protection_box)
-        return page
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(page)
+        return scroll
 
     def _settings_tab(self, group):
         content = QWidget()
@@ -323,7 +354,7 @@ class MainWindow(QMainWindow):
         tools_scroll = QScrollArea()
         tools_scroll.setWidgetResizable(True)
         tools_scroll.setWidget(self.hardware_tools)
-        tabs.addTab(tools_scroll, 'Calibration & telemetry')
+        tabs.addTab(tools_scroll, 'Calibration && telemetry')
         return page
 
     def _profiles(self):
@@ -388,7 +419,7 @@ class MainWindow(QMainWindow):
         self.game_tabs = QTabWidget()
         layout.addWidget(self.game_tabs, 3)
         notes = QWidget()
-        self.game_tabs.addTab(notes, 'Setup & evidence')
+        self.game_tabs.addTab(notes, 'Setup && evidence')
         layout = QVBoxLayout(notes)
         self.game_detail = label(
             "Select a game to see its setup and test status.", True
@@ -413,7 +444,7 @@ class MainWindow(QMainWindow):
         setup_scroll = QScrollArea()
         setup_scroll.setWidgetResizable(True)
         setup_scroll.setWidget(self.game_setup_panel)
-        self.game_tabs.addTab(setup_scroll, 'Profiles & test results')
+        self.game_tabs.addTab(setup_scroll, 'Profiles && test results')
         self.mapping_editor.save_requested.connect(self.save_game_mapping)
         self.mapping_editor.start_requested.connect(self.start_game_mapping)
         self.mapping_editor.apply_requested.connect(self.apply_game_mapping)

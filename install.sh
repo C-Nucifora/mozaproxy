@@ -4,15 +4,17 @@ set -euo pipefail
 
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 install_service=false
+install_game_service=false
 install_permissions=false
 for argument in "$@"; do
     case "$argument" in
         --service) install_service=true ;;
+        --game-service) install_game_service=true ;;
         --permissions) install_permissions=true ;;
         -h|--help)
-            echo "Usage: ./install.sh [--service] [--permissions]"
+            echo "Usage: ./install.sh [--service] [--game-service] [--permissions]"
             echo "Creates a venv, mozaproxy-app launcher, and desktop application entry."
-            echo "Optional relay service is installed but not started."
+            echo "Optional relay and game-detection services are installed but not started."
             echo "--permissions installs uinput and MOZA base hidraw access rules using sudo."
             exit 0 ;;
         *) echo "Unknown option: $argument" >&2; exit 2 ;;
@@ -139,4 +141,24 @@ echo "Installation does not hide the physical wheel or enable the service."
 if [[ -f /etc/udev/rules.d/99-mozaproxy.rules ]]; then
     echo "Legacy hiding rule detected: /etc/udev/rules.d/99-mozaproxy.rules"
     echo "See README.md for removal and restoration of direct wheel access."
+fi
+
+if "$install_game_service"; then
+    ./.venv/bin/python - "$project_dir" <<'PYUNIT'
+from pathlib import Path
+import os, sys, time, shutil
+root = Path(sys.argv[1])
+if any(ord(c) < 32 for c in str(root)):
+    raise ValueError('Service installation path contains control characters')
+def quote(value):
+    return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%').replace('$', '$$') + '"'
+unit = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))/'systemd/user/mozaproxy-games.service'
+unit.parent.mkdir(parents=True, exist_ok=True)
+if unit.exists():
+    shutil.copy2(unit, unit.with_name(unit.name + '.backup-' + str(time.time_ns())))
+unit.write_text('[Unit]\nDescription=Mozaproxy game profile detection\n\n[Service]\nType=simple\nExecStart=' + quote(root/'.venv/bin/python') + ' -m mozaproxy.game_service\nWorkingDirectory=' + str(root).replace('%', '%%') + '\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n')
+print('Installed', unit)
+PYUNIT
+    systemctl --user daemon-reload
+    echo "Enable detection in Games, then run: systemctl --user enable --now mozaproxy-games.service"
 fi

@@ -1,6 +1,7 @@
 """Typed MOZA settings and wire conversions. Protocol reference: Boxflat serial.yml."""
 
 import math
+import re
 import struct
 from dataclasses import dataclass
 
@@ -28,6 +29,10 @@ class Setting:
     description: str = ""
 
     def encode(self, value):
+        if self.kind == 'color':
+            if not isinstance(value, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', value):
+                raise ValueError('Color must be #RRGGBB')
+            return bytes.fromhex(value[1:])
         raw = float(value) * self.scale + self.offset
         return (
             struct.pack(">f", raw)
@@ -36,6 +41,10 @@ class Setting:
         )
 
     def decode(self, payload):
+        if self.kind == 'color':
+            if len(payload) != 3:
+                raise ValueError('RGB reply must contain three bytes')
+            return '#' + payload.hex().upper()
         raw = (
             struct.unpack(">f", payload)[0]
             if self.floating
@@ -318,6 +327,19 @@ add(
 )
 
 
+# Newer wheel RGB protocol at address 23. A valid readback is required before
+# HardwareController allows writing any individual control; no model inferred
+# from the base's USB identity. Legacy color commands are intentionally separate.
+add('telemetry_mode', 'Wheel telemetry mode', 'wheel', [28, 0], kind='select',
+    choices=((0, 'Game / default'), (1, 'External telemetry')), maximum=1, unit='', **wheel)
+for kind, count, channel in [('rpm', 10, 0), ('button', 14, 1)]:
+    for index in range(count):
+        add(f'{kind}_color_{index+1}', f'{kind.upper() if kind == "rpm" else "Button"} light {index+1}',
+            'wheel', [31, channel, 255, index], kind='color', unit='',
+            device=23, read_group=64, write_group=63, size=3,
+            description='RGB color on wheels that reply to the newer address-23 lighting protocol. Apply requires a valid reading for this light.')
+
+
 def schema():
     return {
         "groups": [
@@ -341,7 +363,9 @@ def validate_settings(values):
         if key not in SETTINGS:
             raise ValueError("Unknown setting: " + str(key))
         s = SETTINGS[key]
-        if s.kind == "boolean":
+        if s.kind == 'color':
+            s.encode(value)
+        elif s.kind == "boolean":
             if not isinstance(value, bool):
                 raise ValueError(s.label + " must be true or false")
         else:

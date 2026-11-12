@@ -12,6 +12,8 @@ import time
 from .app_state import AppState, ProfileStore, games
 from .settings import schema
 from .protection import ProtectionStore, timeout_ms
+from .game_setup import GameSetupStore, GameSession
+from .telemetry import TelemetryMonitor
 
 DEFAULT_SOCKET = '/run/mozaproxy/control.sock'
 SYSTEM_CONFIG = Path('/etc/mozaproxy/system.json')
@@ -109,6 +111,12 @@ class RemoteHardware:
     def apply(self, settings):
         return self.client.call('hardware_apply', {'settings': settings})
 
+    def calibration_start(self, pedal, idle_confirmed=False):
+        return self.client.call('calibration_start', {'pedal': pedal, 'idle_confirmed': idle_confirmed})
+
+    def calibration_stop(self):
+        return self.client.call('calibration_stop')
+
 
 class RemoteRelay:
     def __init__(self, client):
@@ -140,7 +148,10 @@ class SystemAppState:
         from .app_state import GameMappingStore
         self.game_mappings = GameMappingStore(directory)
         self.protection = ProtectionStore(directory)
+        self.game_setup = GameSetupStore(directory)
+        self.game_session = GameSession()
         self.hardware = RemoteHardware(client)
+        self.telemetry = TelemetryMonitor()
         self.relay = RemoteRelay(client)
 
     def snapshot(self):
@@ -161,6 +172,8 @@ class SystemAppState:
         state.update(profiles=profiles, active_profile=active)
         state.update(game_mappings=self.game_mappings.snapshot()[0], game_mapping_error=self.game_mappings.error)
         state['protection'] = self.protection.snapshot()
+        state['game_setup'] = self.game_setup.snapshot()
+        state['telemetry'] = self.telemetry.status()
         # Historical local-mode results do not validate a newly installed route.
         state['games'] = [dict(game, launch_options='', status='untested', input_status='untested',
                                ffb_status='untested', detail='Default route: direct physical wheel, relay off. Built-in game routing and this service setup still need validation; preserve any working manual game configuration.')
@@ -182,7 +195,10 @@ class SystemAppState:
         raise ValueError('Custom mappings can be saved here, but activation currently requires local app mode')
 
     def close(self):
-        self.client.close()
+        try:
+            self.telemetry.close()
+        finally:
+            self.client.close()
 
 
 def read_system_config(path):

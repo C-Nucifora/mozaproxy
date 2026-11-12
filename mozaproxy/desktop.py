@@ -1,6 +1,7 @@
 """Native Qt6 wheel manager. No HTTP server or browser is involved."""
 
 import argparse
+import time
 import json
 import os
 import signal
@@ -41,6 +42,9 @@ from .app_state import AppState, validate_settings
 from .qt_controller import Controller
 from .qt_widgets import InputBench, SettingRow, TorqueSettingRow
 from .game_mapping_editor import GameMappingEditor
+from .game_setup_ui import GameSetupPanel
+from .hardware_tools_ui import HardwareToolsPanel
+from .game_service import owner_lock, write_status
 from .game_mappings import default_mapping
 from .desktop_theme import configure_desktop_plugins
 from .protection import DESCRIPTION, DETAIL, launcher_options
@@ -85,6 +89,9 @@ class MainWindow(QMainWindow):
         self._games_signature = None
         self._input_signature = None
         self._can_close = False
+        self._game_lock = None
+        self._game_poll_blocked = False
+        self._watcher_event = None
         self._pending_job = None
         self._active_operation = None
         self.rows = {}
@@ -100,8 +107,12 @@ class MainWindow(QMainWindow):
         self.timer = QTimer(self)
         self.timer.setInterval(200)
         self.timer.timeout.connect(self.controller.refresh)
+        self.game_timer = QTimer(self)
+        self.game_timer.setInterval(2500)
+        self.game_timer.timeout.connect(self.poll_game)
         if start_polling:
             self.timer.start()
+            self.game_timer.start()
             self.controller.refresh()
 
     def _build(self):
@@ -308,6 +319,11 @@ class MainWindow(QMainWindow):
         for group in self.schema["groups"]:
             if group["id"] in ("pedals", "wheel", "handbrake"):
                 tabs.addTab(self._settings_tab(group), group["label"])
+        self.hardware_tools = HardwareToolsPanel(self)
+        tools_scroll = QScrollArea()
+        tools_scroll.setWidgetResizable(True)
+        tools_scroll.setWidget(self.hardware_tools)
+        tabs.addTab(tools_scroll, 'Calibration & telemetry')
         return page
 
     def _profiles(self):
@@ -393,6 +409,11 @@ class MainWindow(QMainWindow):
         )
         self.mapping_editor = GameMappingEditor()
         self.game_tabs.addTab(self.mapping_editor, 'R25 mapping')
+        self.game_setup_panel = GameSetupPanel(self)
+        setup_scroll = QScrollArea()
+        setup_scroll.setWidgetResizable(True)
+        setup_scroll.setWidget(self.game_setup_panel)
+        self.game_tabs.addTab(setup_scroll, 'Profiles & test results')
         self.mapping_editor.save_requested.connect(self.save_game_mapping)
         self.mapping_editor.start_requested.connect(self.start_game_mapping)
         self.mapping_editor.apply_requested.connect(self.apply_game_mapping)
@@ -409,6 +430,10 @@ class MainWindow(QMainWindow):
                 column, QHeaderView.ResizeMode.ResizeToContents
             )
         layout.addWidget(self.diagnostics_tree, 1)
+        self.settings_report = QPlainTextEdit()
+        self.settings_report.setReadOnly(True)
+        self.settings_report.setAccessibleName('Last settings Apply report')
+        layout.addWidget(self.settings_report, 1)
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setAccessibleName("Relay output")
@@ -444,8 +469,13 @@ class MainWindow(QMainWindow):
         self.state = state
         device = state.get("device", {})
         hardware = state.get("hardware", {})
+        report = json.dumps(hardware.get("last_apply"), indent=2) if hardware.get("last_apply") else "No settings have been applied in this session."
+        if self.settings_report.toPlainText() != report:
+            self.settings_report.setPlainText(report)
         relay = state.get("relay", {})
         protection = state.get('protection', {})
+        self.game_setup_panel.refresh(state)
+        self.hardware_tools.refresh(state)
         self.menu_force_protection.setChecked(protection.get('enabled', False))
         self.protection_command.setText(protection.get('launch_options', launcher_options()))
         if not self.menu_force_timeout.hasFocus():
@@ -580,6 +610,13 @@ class MainWindow(QMainWindow):
         )
         if self.log.toPlainText() != logs:
             self.log.setPlainText(logs)
+        event = state.get('game_setup', {}).get('watcher', {}).get('event', {})
+        if event and event.get('time') != self._watcher_event:
+            self._watcher_event = event.get('time')
+            selected = next((p for p in state.get('profiles', []) if p['id'] == event.get('profile_id')), None)
+            if selected and not self.draft and not self.invalid_fields and self._pending_job is None:
+                self.load_profile(selected)
+            self.feedback.setText(event.get('message', 'Game profile detected.'))
         self._update_actions()
 
     def _update_actions(self):
@@ -793,6 +830,7 @@ class MainWindow(QMainWindow):
             return
         game = current.data(0, Qt.ItemDataRole.UserRole)
         self.game_detail.setText(game["detail"])
+        self.game_setup_panel.select(game["id"])
         self.launch_options.setPlainText(game["launch_options"])
         saved = next((p for p in self.state.get('game_mappings', []) if p['game_id'] == game['id']), None)
         saved = {k:v for k,v in saved.items() if k != 'id'} if saved else default_mapping(game['id'])
@@ -806,6 +844,38 @@ class MainWindow(QMainWindow):
 
     def apply_game_mapping(self, game_id):
         self._submit('apply-game-mapping', lambda: self.backend.apply_game_mapping(game_id))
+
+    def poll_game(self):
+        if not hasattr(self.backend, 'game_setup') or self.controller.closing:
+            return
+        directory = self.backend.game_setup.path.parent
+        directory.mkdir(parents=True, exist_ok=True)
+        write_status(directory / 'desktop-presence.json', dict(updated=time.time()))
+        if not self.state.get('game_setup', {}).get('detection'):
+            if self._game_lock is not None:
+                self._game_lock.__exit__(None, None, None)
+                self._game_lock = None
+            self.backend.game_session.previous = None
+            return
+        if self.controller.busy or self._pending_job is not None:
+            self._game_poll_blocked |= self._active_operation is not None or self._pending_job is not None
+            return
+        if self._game_lock is None:
+            lock = owner_lock(directory)
+            if not lock.__enter__():
+                lock.__exit__(None, None, None)
+                return
+            self._game_lock = lock
+        blocked = bool(self.draft or self.invalid_fields or self._game_poll_blocked)
+        self._game_poll_blocked = False
+        def detect():
+            setup = self.backend.game_setup.settings()
+            profiles = self.backend.profiles.snapshot()[0]
+            result = self.backend.game_session.poll(setup, profiles, blocked)
+            if not result or result['action'] == 'notice':
+                return result
+            return result
+        self.controller.submit('game-detection', detect)
 
     def save_force_timeout(self):
         timeout = self.menu_force_timeout.value()
@@ -844,6 +914,35 @@ class MainWindow(QMainWindow):
             self._submit("export", export)
 
     def _operation_done(self, name, result):
+        if name == 'game-detection':
+            if result:
+                if 'profile' in result and not self.draft and not self.invalid_fields and self._pending_job is None:
+                    profile = result['profile']
+                    self.load_profile(profile)
+                    if result['action'] == 'apply':
+                        status = self.state.get('hardware', {})
+                        if status.get('connected') and not status.get('busy') and status.get('port'):
+                            requested = deepcopy(profile['settings'])
+                            self._apply_requested = requested
+                            def apply_link():
+                                setup = self.backend.game_setup.settings()
+                                policy = json.dumps({k: setup[k] for k in ('detection', 'automatic', 'links')}, sort_keys=True)
+                                live = self.backend.game_session.scan()
+                                game = result['game_id']
+                                if policy != result['policy'] or set(live) != {game} or not (live[game] & set(result['launch_tokens'])):
+                                    raise ValueError('Automatic Apply skipped because game or options changed')
+                                if profile not in self.backend.profiles.snapshot()[0]:
+                                    raise ValueError('Automatic Apply skipped because the linked profile changed')
+                                self.backend.profiles.activate(profile['id'])
+                                return self.backend.hardware.apply(requested)
+                            self._submit('apply', apply_link)
+                            return
+                        self.feedback.setText('Profile selected; automatic Apply skipped because settings are disconnected or busy.')
+                    else:
+                        self._submit('select-profile', lambda: self.backend.profiles.activate(profile['id']))
+                else:
+                    self.feedback.setText(result.get('message', 'Game detected; automatic selection skipped because edits are pending.'))
+            return
         if name == 'save-game-mapping':
             self.mapping_editor.saved(result)
             self.feedback.setText('Game mapping saved. Running input is unchanged.')
@@ -909,6 +1008,7 @@ class MainWindow(QMainWindow):
             return
         event.ignore()
         self.timer.stop()
+        self.game_timer.stop()
         self.feedback.setText(
             "Closing the app. The system wheel service will keep running."
             if self.state.get("integration", {}).get("mode") == "system"
@@ -919,6 +1019,8 @@ class MainWindow(QMainWindow):
 
     def _closed(self):
         self._can_close = True
+        if self._game_lock is not None:
+            self._game_lock.__exit__(None, None, None)
         self.close()
 
 

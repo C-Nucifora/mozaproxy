@@ -47,9 +47,12 @@ show test status and launch options; they do not modify Steam configuration.
 The relay starts only when requested and the app stops only its own child.
 `--data-dir` selects a different directory for the profile store.
 
-This is not yet full Boxflat parity. Guided calibration, individual LED colors,
-telemetry lighting, firmware management, and automatic game switching are not
-implemented. Settings writes still need attended hardware validation.
+Game-linked profiles and optional background detection are described in
+[game setup](docs/game-setup.md). Automatic Apply is off by default.
+[Hardware tools](docs/hardware-tools.md) add settings reports, supported pedal
+calibration, RGB controls and optional FH5 telemetry lighting. Physical validation
+remains pending. Firmware flashing and independent USB accessory configuration
+are not implemented; this is not full Boxflat parity.
 
 The earlier web interface remains available for development with
 `./.venv/bin/python -m mozaproxy.web`, then `http://127.0.0.1:8765`.

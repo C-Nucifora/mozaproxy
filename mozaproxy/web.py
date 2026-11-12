@@ -108,11 +108,23 @@ class Handler(BaseHTTPRequestHandler):
             result = app.hardware.connect()
         elif self.command == 'POST' and path == '/api/hardware/disconnect':
             result = app.hardware.disconnect()
+        elif self.command == 'POST' and path == '/api/telemetry/start':
+            result = app.telemetry.start(body.get('port', 20777), body.get('output', False))
+        elif self.command == 'POST' and path == '/api/telemetry/stop':
+            result = app.telemetry.stop()
+        elif self.command == 'POST' and path == '/api/calibration/start':
+            result = app.hardware.calibration_start(body.get('pedal'), body.get('idle_confirmed', False))
+        elif self.command == 'POST' and path == '/api/calibration/stop':
+            result = app.hardware.calibration_stop()
         elif self.command == 'POST' and path == '/api/hardware/apply':
             settings = validate_settings(body.get('settings'), app.schema_provider())
             result = app.hardware.apply(settings)
         elif self.command == 'POST' and path == '/api/relay/start':
             result = app.relay.start(dict(body, **app.protection.settings()))
+        elif self.command == 'POST' and path == '/api/game-setup':
+            result = app.game_setup.save(body, app.profiles.snapshot()[0])
+        elif self.command == 'POST' and path == '/api/game-results':
+            result = app.game_setup.record(body)
         elif self.command == 'POST' and path == '/api/protection':
             result = app.protection.save(body.get('enabled'), body.get('timeout_ms'))
         elif self.command == 'POST' and path == '/api/relay/stop':

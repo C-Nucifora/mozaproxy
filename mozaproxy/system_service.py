@@ -26,7 +26,7 @@ DEFAULT_SOCKET = '/run/mozaproxy/control.sock'
 MAX_REQUEST_BYTES = 65536
 MAX_RESPONSE_BYTES = 1048576
 METHODS = frozenset(('status', 'schema', 'relay_start', 'relay_stop',
-                     'hardware_connect', 'hardware_disconnect', 'hardware_apply'))
+                     'hardware_connect', 'hardware_disconnect', 'hardware_apply', 'calibration_start', 'calibration_stop'))
 RELAY_IDENTITY = {'profile': 'compact', 'name': 'MOZA R9 Base', 'product': 2}
 
 
@@ -59,7 +59,7 @@ class ServiceBackend:
             raise ValueError('Unknown method')
         if not isinstance(params, dict):
             raise ValueError('Params must be an object')
-        expected = {'settings'} if method == 'hardware_apply' else set()
+        expected = {'settings'} if method == 'hardware_apply' else {'pedal', 'idle_confirmed'} if method == 'calibration_start' else set()
         if method == 'relay_start' and set(params) <= {'menu_force_protection', 'menu_force_timeout_ms'}:
             if 'menu_force_protection' in params and type(params['menu_force_protection']) is not bool:
                 raise ValueError('Menu force protection must be a boolean')
@@ -81,6 +81,10 @@ class ServiceBackend:
                             'default_route': 'direct', 'physical_access': 'desktop-and-service',
                             'game_validation': 'experimental',
                             'detail': 'Physical access remains available. The relay starts only on request; virtual game compatibility requires validation.'}}
+            if method == 'calibration_start':
+                return self.hardware.calibration_start(**params)
+            if method == 'calibration_stop':
+                return self.hardware.calibration_stop()
             if method == 'schema':
                 return self.schema_provider()
             if method == 'relay_start':

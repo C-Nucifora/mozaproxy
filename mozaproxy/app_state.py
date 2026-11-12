@@ -18,6 +18,8 @@ import uuid
 
 from .game_mappings import default_mapping, validate_mapping, write_mapping_document
 from .protection import ProtectionStore, launcher_options, timeout_ms
+from .game_setup import GameSetupStore, GameSession
+from .telemetry import TelemetryMonitor
 
 ROOT = Path(__file__).resolve().parent.parent
 GAME_IDS = {'fh5', 'jdm', 'fs22', 'fs25', 'ac', 'acc', 'lmu', 'heat', 'beamng', 'ets2'}
@@ -54,7 +56,10 @@ def validate_settings(settings, schema):
         item = definitions.get(key)
         if item is None:
             raise ValueError(f'Unknown setting: {key}')
-        if item.get('type') == 'boolean':
+        if item.get('type') == 'color':
+            if not isinstance(value, str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', value):
+                raise ValueError(f'{key} must be #RRGGBB')
+        elif item.get('type') == 'boolean':
             if type(value) is not bool:
                 raise ValueError(f'{key} must be a boolean')
         elif item.get('choices'):
@@ -435,11 +440,14 @@ class AppState:
                 if schema_provider is None:
                     schema_provider = lambda: {'groups': [], 'settings': []}
         self.hardware = hardware
+        self.telemetry = TelemetryMonitor(hardware)
         self.schema_provider = schema_provider
         directory = Path(data_dir) if data_dir is not None else Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'mozaproxy'
         self.profiles = ProfileStore(directory, self.schema_provider)
         self.game_mappings = GameMappingStore(directory)
         self.protection = ProtectionStore(directory)
+        self.game_setup = GameSetupStore(directory)
+        self.game_session = GameSession()
         self.monitor = monitor if monitor is not None else PassiveMonitor()
         self.relay = relay if relay is not None else RelayProcess()
 
@@ -468,6 +476,8 @@ class AppState:
                     'game_mappings': self.game_mappings.snapshot()[0],
                     'game_mapping_error': self.game_mappings.error,
                     'protection': self.protection.snapshot(),
+                    'game_setup': self.game_setup.snapshot(),
+                    'telemetry': self.telemetry.status(),
                     'diagnostics': {'items': diagnostics}}
 
     def start_game_mapping(self, game_id):
@@ -488,7 +498,7 @@ class AppState:
 
     def close(self):
         errors = []
-        for name, resource in (('relay', self.relay), ('monitor', self.monitor),
+        for name, resource in (('telemetry', self.telemetry), ('relay', self.relay), ('monitor', self.monitor),
                                ('hardware', self.hardware)):
             try:
                 resource.close()

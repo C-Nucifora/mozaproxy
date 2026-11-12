@@ -79,7 +79,7 @@ function setOnline(value, message = '') {
 }
 function signature() {
   if (!state) return '';
-  return JSON.stringify({connected:state.device?.connected, axes:(state.device?.axes || []).map(a=>[a.code,a.label]), buttons:(state.device?.buttons || []).map(b=>b.code), hardware:[state.hardware?.connected,state.hardware?.port,state.hardware?.conflict,state.hardware?.error], relay:[state.relay?.running,state.relay?.profile], profiles:state.profiles, active:state.active_profile, protection:state.protection, games:state.games, diagnostics:state.diagnostics?.items});
+  return JSON.stringify({connected:state.device?.connected, axes:(state.device?.axes || []).map(a=>[a.code,a.label]), buttons:(state.device?.buttons || []).map(b=>b.code), hardware:[state.hardware?.connected,state.hardware?.port,state.hardware?.conflict,state.hardware?.error], relay:[state.relay?.running,state.relay?.profile], profiles:state.profiles, active:state.active_profile, protection:state.protection, game_setup:state.game_setup && {...state.game_setup,watcher:state.game_setup.watcher?.event}, last_apply:state.hardware?.last_apply, games:state.games, diagnostics:state.diagnostics?.items});
 }
 async function poll() {
   if (polling) return;
@@ -166,7 +166,9 @@ function settingRow(s) {
   const id = escapeHTML(s.id), value = settingValue(s), confirmed = (state.hardware?.values || {})[s.id];
   const pending = own(draft,s.id);
   let control;
-  if (s.type === 'select' || s.type === 'boolean' || s.choices?.length) {
+  if(s.type==='color') {
+    control=`<input type="text" id="setting-${id}" data-setting="${id}" maxlength="7" placeholder="#RRGGBB" value="${escapeHTML(value || '')}" aria-label="${escapeHTML(s.label)}"><input type="color" data-color-for="${id}" aria-label="Choose ${escapeHTML(s.label)}" value="${escapeHTML(value || '#ffffff')}">`;
+  } else if (s.type === 'select' || s.type === 'boolean' || s.choices?.length) {
     const choices = s.type==='boolean' && !s.choices?.length ? [{value:false,label:'Off'},{value:true,label:'On'}] : s.choices || [];
     control = `<select id="setting-${id}" data-setting="${id}" aria-describedby="description-${id} confirmed-${id}"><option value="" ${value===undefined?'selected':''} disabled>Choose a value</option>${choices.map(c=>`<option value="${escapeHTML(JSON.stringify(c.value))}" ${JSON.stringify(c.value)===JSON.stringify(value)?'selected':''}>${escapeHTML(c.label)}</option>`).join('')}</select>`;
   } else {
@@ -201,22 +203,23 @@ function renderProfiles() {
   return heading('Profiles', 'Save a setup, then load its values into draft when you need them.') + `<div class="profiles-layout"><section><div class="section-heading"><h2>Saved setups</h2><span class="section-note">${profiles.length} saved</span></div>${profiles.map(p=>`<article class="profile-row"><div class="profile-row-heading"><h3>${escapeHTML(p.name)}</h3>${p.id===state.active_profile?badge('Selected','good'):''}</div><p class="profile-meta">${escapeHTML((state.games || []).find(g=>g.id===p.game_id)?.name || 'Any game')} · ${Object.keys(p.settings || {}).length} settings</p><div class="profile-actions"><button class="button small" data-action="profile-load" data-id="${escapeHTML(p.id)}" data-mutation>Load into draft</button><button class="button small quiet" data-action="profile-edit" data-id="${escapeHTML(p.id)}">Edit</button><button class="button small quiet danger" data-action="profile-delete-request" data-id="${escapeHTML(p.id)}">Delete</button></div>${deletingProfile===p.id?`<div class="delete-confirm"><span>Delete this saved profile?</span><button class="button small danger" data-action="profile-delete" data-id="${escapeHTML(p.id)}" data-mutation>Delete profile</button><button class="button small quiet" data-action="delete-cancel">Cancel</button></div>`:''}</article>`).join('') || '<div class="empty-state"><h2>Your first setup starts here</h2><p>Read the device settings or adjust values in Wheelbase, then give the setup a name and save it.</p><a class="button" href="#wheelbase">Open wheelbase settings</a></div>'}</section><section><div class="section-heading"><h2>${editingProfile?'Edit profile':'Save current setup'}</h2>${editingProfile?'<button class="button small quiet" data-action="profile-new">New profile</button>':''}</div>${Object.keys(invalidSettings).length?'<div class="alert error" role="alert">Correct the invalid values in <a href="#wheelbase">Wheelbase</a> or <a href="#controls">Pedals &amp; controls</a> before saving.</div>':''}<form id="profile-form"><div class="form-field"><label for="profile-name">Profile name</label><input type="text" id="profile-name" name="name" maxlength="80" placeholder="e.g. FH5 · road cars" value="${escapeHTML(profileName)}" required></div><div class="form-field"><label for="profile-game">Game</label><select id="profile-game"><option value="">Any game</option>${(state.games || []).map(g=>`<option value="${escapeHTML(g.id)}" ${profileGame===g.id?'selected':''}>${escapeHTML(g.name)}</option>`).join('')}</select></div><div class="draft-summary"><p>${Object.keys(settings).length} settings will be saved.</p><p class="muted">${editingProfile?'Includes this profile’s values plus your draft changes.':'Includes confirmed device values plus your draft changes.'} Saving does not write to hardware.</p>${Object.keys(settings).length?`<details class="profile-value-details"><summary>Review values</summary><dl class="draft-list">${Object.entries(settings).map(([id,value])=>{const s=schema.settings.find(s=>s.id===id);return `<dt>${escapeHTML(s?.label || id)}${own(draft,id)?' · draft':''}</dt><dd>${escapeHTML(s?humanValue(s,value):value)}</dd>`;}).join('')}</dl></details>`:''}</div><button class="button primary" type="submit" data-mutation ${!Object.keys(settings).length?'disabled data-empty="true"':''}>${editingProfile?'Update profile':'Save profile'}</button></form></section></div>`;
 }
 function renderGames() {
-  return heading('Games', 'The tested routes, known issues and launch options for your library.') + `<div class="alert">Compatibility results depend on the wheel, firmware and game configuration. See each game's test status.</div><section>${(state.games || []).map(g=>`<article class="game-row"><div class="game-monogram" aria-hidden="true">${escapeHTML(g.abbr || g.name.slice(0,3))}</div><div><div class="game-name"><h2>${escapeHTML(g.name)}</h2>${badge(g.status,statusKind(g.status))}</div><p class="game-detail">${escapeHTML(g.detail)}</p><div class="game-statuses"><span>Input: ${escapeHTML(g.input_status || 'Not tested')}</span><span>FFB: ${escapeHTML(g.ffb_status || 'Not tested')}</span></div></div><div class="game-launch">${g.launch_options?`<div class="launch-label">Steam launch options</div><code class="launch-options">${escapeHTML(g.launch_options)}</code><button class="button small" data-action="copy-launch" data-id="${escapeHTML(g.id)}">Copy launch options</button>`:'<p class="game-detail">No launch override configured.</p>'}</div></article>`).join('') || '<div class="empty-state"><h2>No game routes available</h2><p>Reconnect to the local app to load compatibility notes.</p></div>'}</section><p class="inline-note">Launch options are copied as text. Start and stop the relay separately in <a href="#overview">Overview</a>.</p>`;
+  return renderGameSetup() + heading('Games', 'The tested routes, known issues and launch options for your library.') + `<div class="alert">Compatibility results depend on the wheel, firmware and game configuration. See each game's test status.</div><section>${(state.games || []).map(g=>`<article class="game-row"><div class="game-monogram" aria-hidden="true">${escapeHTML(g.abbr || g.name.slice(0,3))}</div><div><div class="game-name"><h2>${escapeHTML(g.name)}</h2>${badge(g.status,statusKind(g.status))}</div><p class="game-detail">${escapeHTML(g.detail)}</p><div class="game-statuses"><span>Input: ${escapeHTML(g.input_status || 'Not tested')}</span><span>FFB: ${escapeHTML(g.ffb_status || 'Not tested')}</span></div></div><div class="game-launch">${g.launch_options?`<div class="launch-label">Steam launch options</div><code class="launch-options">${escapeHTML(g.launch_options)}</code><button class="button small" data-action="copy-launch" data-id="${escapeHTML(g.id)}">Copy launch options</button>`:'<p class="game-detail">No launch override configured.</p>'}</div></article>`).join('') || '<div class="empty-state"><h2>No game routes available</h2><p>Reconnect to the local app to load compatibility notes.</p></div>'}</section><p class="inline-note">Launch options are copied as text. Start and stop the relay separately in <a href="#overview">Overview</a>.</p>`;
 }
 function renderDiagnostics() {
-  return heading('Diagnostics', 'Connection checks and relay output from this session.', '<a class="button" href="/api/diagnostics/export" download="mozaproxy-diagnostics.json">Export report</a>') + `<section class="plain-section"><div class="section-heading"><h2>System checks</h2><span class="section-note">Current app state</span></div>${(state.diagnostics?.items || []).map(item=>`<div class="diagnostic-row"><strong>${escapeHTML(item.label)}</strong><div>${badge(item.status,statusKind(item.status))}</div><p>${escapeHTML(item.detail)}</p></div>`).join('') || '<div class="empty-state"><p>The local app has not reported diagnostics yet.</p></div>'}</section><section class="plain-section"><div class="section-heading"><h2>Device details</h2></div><dl class="detail-list"><div><dt>Input path</dt><dd>${escapeHTML(state.device?.path || 'Not detected')}</dd></div><div><dt>Settings port</dt><dd>${escapeHTML(state.hardware?.port || 'Not connected')}</dd></div><div><dt>FFB effect slots</dt><dd>${escapeHTML(state.device?.slots ?? 'Not read')}</dd></div><div><dt>Supported effects</dt><dd>${escapeHTML((state.device?.effects || []).join(', ') || 'Not read')}</dd></div><div><dt>Relay process</dt><dd>${escapeHTML(state.relay?.running ? `PID ${state.relay.pid} · ${state.relay.profile}` : 'Stopped')}</dd></div></dl></section><section><div class="section-heading"><h2>Relay log</h2><span class="section-note">Recent output</span></div><pre class="log-view" id="relay-log" tabindex="0">${escapeHTML((state.relay?.log || []).join('\n') || 'No relay output yet. Start a relay from Overview when your game requires it.')}</pre><p class="inline-note">The export contains device, settings and recent relay diagnostics. It excludes environment variables and secrets.</p></section>`;
+  return `<section class="plain-section"><h2>Last settings Apply</h2><pre class="log-view">${escapeHTML(JSON.stringify(state.hardware?.last_apply || 'No settings applied this session',null,2))}</pre></section>` + heading('Diagnostics', 'Connection checks and relay output from this session.', '<a class="button" href="/api/diagnostics/export" download="mozaproxy-diagnostics.json">Export report</a>') + `<section class="plain-section"><div class="section-heading"><h2>System checks</h2><span class="section-note">Current app state</span></div>${(state.diagnostics?.items || []).map(item=>`<div class="diagnostic-row"><strong>${escapeHTML(item.label)}</strong><div>${badge(item.status,statusKind(item.status))}</div><p>${escapeHTML(item.detail)}</p></div>`).join('') || '<div class="empty-state"><p>The local app has not reported diagnostics yet.</p></div>'}</section><section class="plain-section"><div class="section-heading"><h2>Device details</h2></div><dl class="detail-list"><div><dt>Input path</dt><dd>${escapeHTML(state.device?.path || 'Not detected')}</dd></div><div><dt>Settings port</dt><dd>${escapeHTML(state.hardware?.port || 'Not connected')}</dd></div><div><dt>FFB effect slots</dt><dd>${escapeHTML(state.device?.slots ?? 'Not read')}</dd></div><div><dt>Supported effects</dt><dd>${escapeHTML((state.device?.effects || []).join(', ') || 'Not read')}</dd></div><div><dt>Relay process</dt><dd>${escapeHTML(state.relay?.running ? `PID ${state.relay.pid} · ${state.relay.profile}` : 'Stopped')}</dd></div></dl></section><section><div class="section-heading"><h2>Relay log</h2><span class="section-note">Recent output</span></div><pre class="log-view" id="relay-log" tabindex="0">${escapeHTML((state.relay?.log || []).join('\n') || 'No relay output yet. Start a relay from Overview when your game requires it.')}</pre><p class="inline-note">The export contains device, settings and recent relay diagnostics. It excludes environment variables and secrets.</p></section>`;
 }
 function render() {
   if (!routes.some(r=>r[0]===route)) route='overview';
   $$('[data-route]').forEach(el=>{if(el.dataset.route===route)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});
   document.title = `${routes.find(r=>r[0]===route)[1]} · Mozaproxy`;
   if (!state) return;
-  const renderers = {overview:renderOverview,wheelbase:renderWheelbase,controls:renderControls,profiles:renderProfiles,games:renderGames,diagnostics:renderDiagnostics};
+  const renderers = {overview:renderOverview,wheelbase:renderWheelbase,controls:()=>renderControls()+renderHardwareTools(),profiles:renderProfiles,games:renderGames,diagnostics:renderDiagnostics};
   $('#content').innerHTML=renderers[route]();
   updateLive();
   updateControls();
 }
 function updateLive() {
+  if($('#hardware-tools-status'))$('#hardware-tools-status').textContent=JSON.stringify({calibration:state.hardware?.calibration,telemetry:state.telemetry},null,2);
   if (!state) return;
   const device=state.device || {}, h=state.hardware || {}, available=online && device.connected;
   $('#device-title').textContent=device.name || 'No wheel detected';
@@ -295,7 +298,10 @@ function recordSetting(element) {
   const id=element.dataset.setting,setting=schema.settings.find(s=>s.id===id);
   if(!setting)return;
   let value;
-  if(element.tagName==='SELECT')value=JSON.parse(element.value);
+  if(setting.type==='color') {
+    value=element.value.toUpperCase();
+    if(!/^#[0-9A-F]{6}$/.test(value)){invalidSettings[id]={value:element.value,message:'Enter #RRGGBB'};updateControls();updateLive();return;}
+  } else if(element.tagName==='SELECT')value=JSON.parse(element.value);
   else {
     value=Number(element.value);
     if(element.value==='' || !element.validity.valid || !Number.isFinite(value)) {
@@ -313,6 +319,7 @@ function recordSetting(element) {
 }
 
 document.addEventListener('input',event=>{
+  if(event.target.matches('[data-color-for]')){const input=$('#setting-'+event.target.dataset.colorFor);input.value=event.target.value;recordSetting(input);}
   if(event.target.matches('[data-setting]'))recordSetting(event.target);
   if(event.target.id==='profile-name')profileName=event.target.value;
 });
@@ -366,7 +373,9 @@ document.addEventListener('click',event=>{
     return;
   }
   mutate(async()=>{
-    if(action==='hardware-connect') {
+    if(action==='calibration-stop'){await api('/api/calibration/stop','POST',{});
+    } else if(action==='telemetry-stop'){await api('/api/telemetry/stop','POST',{});
+    } else if(action==='hardware-connect') {
       const result=await api('/api/hardware/connect','POST',{});
       state.hardware=result;
       if(result.error || result.conflict)throw new Error(result.error || result.conflict);
@@ -421,3 +430,39 @@ async function init() {
   render();await poll();
 }
 init();
+
+function renderGameSetup() {
+  const setup=state.game_setup || {}, profiles=state.profiles || [];
+  if(!state.game_setup)return '';
+  const links=(state.games || []).map(g=>{const link=setup.links?.[g.id] || {};return `<form data-game-link="${escapeHTML(g.id)}" class="plain-section"><h3>${escapeHTML(g.name)} profile</h3><label>Saved profile <select name="profile_id"><option value="">No linked profile</option>${profiles.map(p=>`<option value="${escapeHTML(p.id)}" ${p.id===link.profile_id?'selected':''}>${escapeHTML(p.name)}</option>`).join('')}</select></label><label><input name="game_automatic" type="checkbox" ${link.automatic?'checked':''}> Allow automatic Apply for this game</label><button class="button" data-mutation>Save link</button></form>`;}).join('');
+  return `<section class="plain-section"><h2>Game detection and profiles</h2><p>Detection runs in the desktop app or optional mozaproxy-games user service. Selection leaves Apply to you. Automatic Apply requires both permissions and only runs on a new launch, with connected settings and no pending edits.</p>${setup.error?`<p role="alert">${escapeHTML(setup.error)}</p>`:''}<label><input id="game-detection" type="checkbox" ${setup.detection?'checked':''}> Detect games and select linked profiles</label><label><input id="game-automatic" type="checkbox" ${setup.automatic?'checked':''}> Allow automatic Apply on new launches</label>${links}</section><section class="plain-section"><h2>Record an attended game test</h2><form id="game-result-form"><label>Game <select name="game_id">${(state.games || []).map(g=>`<option value="${escapeHTML(g.id)}">${escapeHTML(g.name)}</option>`).join('')}</select></label>${['route','runtime','wheel'].map(k=>`<label>${escapeHTML(k)} <input name="${k}" maxlength="200"></label>`).join('')}${['launch','input','ffb','pause_resume'].map(k=>`<label>${escapeHTML(k)} <select name="${k}"><option>untested</option><option>pass</option><option>fail</option></select></label>`).join('')}<label>Notes <input name="notes" maxlength="2000"></label><button class="button" data-mutation>Record result</button></form><pre class="log-view">${escapeHTML(JSON.stringify(setup.records || [],null,2))}</pre></section>`;
+}
+document.addEventListener('change',event=>{
+  if(event.target.id==='game-detection')mutate(()=>api('/api/game-setup','POST',{detection:event.target.checked}));
+  if(event.target.id==='game-automatic')mutate(()=>api('/api/game-setup','POST',{automatic:event.target.checked}));
+});
+document.addEventListener('submit',event=>{
+  const form=event.target;
+  if(form.matches('[data-game-link]')){
+    event.preventDefault();
+    const data=new FormData(form);
+    mutate(()=>api('/api/game-setup','POST',{game_id:form.dataset.gameLink,profile_id:data.get('profile_id') || null,game_automatic:data.has('game_automatic')}));
+  } else if(form.id==='game-result-form') {
+    event.preventDefault();
+    const data=Object.fromEntries(new FormData(form));
+    mutate(()=>api('/api/game-results','POST',data));
+  }
+});
+
+function renderHardwareTools(){
+ return `<section class="plain-section"><h2>Pedal calibration</h2><p>Stop driving first. Fully depress and release the pedal during seven seconds. Stop ends capture but does not restore old calibration.</p><form id="calibration-form"><label>Pedal <select name="pedal"><option>throttle</option><option>brake</option><option>clutch</option></select></label><label><input type="checkbox" name="idle" required> Driving is stopped; I am ready to calibrate</label><button class="button" data-mutation>Start calibration</button><button class="button" type="button" data-action="calibration-stop" data-mutation>Stop calibration</button></form><h2>FH5 telemetry</h2><p>Preview sends no device commands. Set FH5 Data Out to 127.0.0.1 and this port. LED output requires the local settings connection and supported readable RGB controls.</p><form id="telemetry-form"><label>UDP port <input type="number" name="port" min="1024" max="65535" value="20777" required></label><label><input type="checkbox" name="output"> Send RPM LEDs to the connected wheel</label><button class="button" data-mutation>Start telemetry</button><button class="button" type="button" data-action="telemetry-stop" data-mutation>Stop telemetry</button></form><pre class="log-view" id="hardware-tools-status"></pre><p><a href="https://support.mozaracing.com/en/support/solutions/articles/70000628053-downloads">Official MOZA firmware and recovery tools</a>. Firmware flashing and independent USB accessory configuration remain unavailable.</p></section>`;
+}
+document.addEventListener('submit',event=>{
+ if(event.target.id==='calibration-form'){
+  event.preventDefault();const data=new FormData(event.target);
+  mutate(()=>api('/api/calibration/start','POST',{pedal:data.get('pedal'),idle_confirmed:data.has('idle')}));
+ } else if(event.target.id==='telemetry-form'){
+  event.preventDefault();const data=new FormData(event.target);
+  mutate(()=>api('/api/telemetry/start','POST',{port:Number(data.get('port')),output:data.has('output')}));
+ }
+});

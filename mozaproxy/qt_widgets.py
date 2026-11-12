@@ -4,9 +4,12 @@ import math
 import re
 
 from PySide6.QtCore import QPointF, QRectF, QSignalBlocker, QSize, Qt, Signal
-from PySide6.QtGui import QPainter, QPalette, QPen, QValidator
+from PySide6.QtGui import QColor, QPainter, QPalette, QPen, QValidator
 from PySide6.QtWidgets import (
     QComboBox,
+    QLineEdit,
+    QPushButton,
+    QColorDialog,
     QDoubleSpinBox,
     QGridLayout,
     QHBoxLayout,
@@ -115,7 +118,15 @@ class SettingRow(QWidget):
         layout.addWidget(self.description_label, 1, 0)
         self.description_label.setVisible(bool(definition.get("description")))
 
-        if definition.get("type") in ("boolean", "select"):
+        if definition.get('type') == 'color':
+            self.editor = QLineEdit()
+            self.editor.setMaxLength(7)
+            self.editor.setPlaceholderText('Not read · #RRGGBB')
+            self.editor.textEdited.connect(self._text_edited)
+            picker = QPushButton('Choose color…')
+            picker.clicked.connect(self._pick_color)
+            layout.addWidget(picker, 3, 1)
+        elif definition.get("type") in ("boolean", "select"):
             self.editor = QComboBox(self)
             self.editor.addItem("Not read", None)
             if definition.get("type") == "boolean":
@@ -165,7 +176,9 @@ class SettingRow(QWidget):
     def set_value(self, value):
         """Replace the editor without emitting a user edit."""
         with QSignalBlocker(self.editor):
-            if isinstance(self.editor, QComboBox):
+            if isinstance(self.editor, QLineEdit):
+                self.editor.setText(value or "")
+            elif isinstance(self.editor, QComboBox):
                 index = self.editor.findData(value) if value is not None else 0
                 self.editor.setCurrentIndex(max(0, index))
             else:
@@ -184,7 +197,16 @@ class SettingRow(QWidget):
         self._invalid = False
         self.set_error("")
 
+    def _pick_color(self):
+        color = QColorDialog.getColor(QColor(self.value() or '#FFFFFF'), self)
+        if color.isValid():
+            self.editor.setText(color.name().upper())
+            self._changed()
+
     def value(self):
+        if isinstance(self.editor, QLineEdit):
+            text = self.editor.text()
+            return text.upper() if re.fullmatch(r'#[0-9a-fA-F]{6}', text) else None
         if isinstance(self.editor, QComboBox):
             return self.editor.currentData()
         return self.editor.parsed_value()
@@ -197,7 +219,9 @@ class SettingRow(QWidget):
         self._invalid = value is None
         self.invalid.emit(self.key, self._invalid)
         if self._invalid:
-            if isinstance(self.editor, QComboBox):
+            if isinstance(self.editor, QLineEdit):
+                self.set_error("Enter a color as #RRGGBB.")
+            elif isinstance(self.editor, QComboBox):
                 self.set_error("Choose a value before applying.")
             else:
                 self.set_error(

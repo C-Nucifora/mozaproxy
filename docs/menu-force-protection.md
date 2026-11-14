@@ -21,21 +21,23 @@ Run `./install.sh` to install the app, `mozaproxy-protect` launcher and native
 helper. Building the helper requires a C compiler. A missing helper stops a
 protected launch with an error instead of launching unprotected.
 
-Use this in ACC's Steam launch options, replacing the home path as appropriate:
+Set this once in both ACC's and LMU's Steam launch options:
 
 ```text
-/home/christian/.local/bin/mozaproxy-protect -- %command%
+mozaproxy-protect -- %command%
 ```
 
-LMU on this workstation also uses these existing flags:
+The app's **Copy one-time Steam launch line** button uses the installed launcher's
+full path, so it also works when Steam's PATH does not include `~/.local/bin`.
+The Games page gives the same command for ACC and LMU. Change the protection
+toggle and timeout in Mozaproxy, then restart the game. Leave the Steam line alone.
+The wrapper works with the desktop app closed.
 
-```text
-PROTON_USE_EAC_LINUX=1 PROTON_ENABLE_WAYLAND=1 /home/christian/.local/bin/mozaproxy-protect -- %command%
-```
-
-The local app's Games page provides ACC and LMU launch suggestions. The Overview page
-provides a generic copyable command. Preserve existing game flags when adding
-the launcher. Other compatible games can use the same launcher; they are not
+For LMU, the wrapper supplies `PROTON_USE_EAC_LINUX=1` and
+`PROTON_ENABLE_WAYLAND=1` when Steam identifies app `2399420`. Explicit environment
+values are preserved; other games do not receive these defaults. Conflicting
+Steam app IDs do not select a game's defaults. Preserve unrelated custom game
+flags when adding the launcher. Other compatible games can use it too; they are not
 protected automatically merely because the app is open.
 
 The launcher reads the toggle on each start, preserving unrelated environment
@@ -43,7 +45,11 @@ variables and preload libraries. It removes its own legacy `lmu_ffb_guard.so`
 entry when migrating an existing launch. Remove the old explicit preload and
 verbose debugging options from Steam once the new launcher is configured.
 
-One-launch overrides, independent of the saved preference:
+Remove old `--menu-force-protection`, `--no-menu-force-protection` and
+`--menu-force-timeout-ms` arguments from Steam during this one-time setup.
+They override the saved settings. The wrapper prints a warning when any are used.
+
+For command-line diagnostics only, one-launch overrides remain available:
 
 ```sh
 mozaproxy-protect --menu-force-protection --menu-force-timeout-ms 100 -- game-command

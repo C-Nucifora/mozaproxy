@@ -10,7 +10,7 @@ import tempfile
 import threading
 
 DESCRIPTION = 'Intended for games whose menus cause a constant force-feedback pull.'
-DETAIL = 'Applies on the next game or relay start. Increase the timeout if driving force cuts out; stale menu force will also last longer. Direct games must use the protection launcher. R25 evdev only; not a hardware torque limit.'
+DETAIL = 'Add the launcher to Steam once. It reads the saved toggle and timeout on every game start; changing settings never requires editing the launch line. Restart the game or relay to use changed settings. Increase the timeout if driving force cuts out; stale menu force will also last longer. R25 evdev only; not a hardware torque limit.'
 DEFAULT_TIMEOUT_MS = 100
 
 
@@ -31,7 +31,8 @@ def library_path():
 
 
 def launcher_options(directory=None):
-    command = [sys.executable, str(Path(__file__).resolve())]
+    installed = Path.home() / '.local/bin/mozaproxy-protect'
+    command = [str(installed)] if installed.is_file() and os.access(installed, os.X_OK) else [sys.executable, str(Path(__file__).resolve())]
     default = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'mozaproxy'
     if directory is not None and Path(directory).resolve() != default.resolve():
         command.extend(['--data-dir', str(Path(directory).resolve())])
@@ -96,6 +97,11 @@ class ProtectionStore:
 
 def game_environment(enabled, environment=None, timeout=DEFAULT_TIMEOUT_MS):
     env = dict(os.environ if environment is None else environment)
+    steam_ids = {env[key] for key in ('SteamAppId', 'SteamGameId') if env.get(key)}
+    if steam_ids == {'2399420'}:
+        # Keep LMU's working startup defaults inside the fixed launcher.
+        env.setdefault('PROTON_USE_EAC_LINUX', '1')
+        env.setdefault('PROTON_ENABLE_WAYLAND', '1')
     # Replace only our own helpers, so switching off cannot leave the LMU guard on.
     own = {str(library_path()), str(library_path().with_name('lmu_ffb_guard.so'))}
     preload = [part for part in env.get('LD_PRELOAD', '').replace(':', ' ').split() if part not in own]
@@ -137,6 +143,9 @@ def main(argv=None):
         env = game_environment(enabled, timeout=timeout)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
+    if args.menu_force_protection is not None or args.menu_force_timeout_ms is not None:
+        print('mozaproxy: command-line protection overrides are active; remove them from Steam to follow saved app settings',
+              file=sys.stderr, flush=True)
     print('mozaproxy: menu force protection ' + (f'enabled ({timeout} ms)' if enabled else 'disabled'), file=sys.stderr, flush=True)
     os.execvpe(command[0], command, env)
 

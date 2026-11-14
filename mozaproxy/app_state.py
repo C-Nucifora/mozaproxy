@@ -42,7 +42,7 @@ def games(data_dir=None):
         ('fs25', 'Farming Simulator 25', 'FS25', 'untested', 'Not tested with the rebuilt relay. Input and physical FFB need a driving test.', '%command%', 'untested', 'untested'),
         ('ac', 'Assetto Corsa', 'AC', 'untested', 'Keep the native device path. Direct-path regression test pending; no relay required by this setup.', '%command%', 'untested', 'untested'),
         ('acc', 'Assetto Corsa Competizione', 'ACC', 'untested', 'Direct physical wheel; keep the relay stopped. The launch helper follows the Menu force protection toggle. Driving and pause/resume validation are pending.', launcher_options(data_dir), 'untested', 'untested'),
-        ('lmu', 'Le Mans Ultimate', 'LMU', 'partial', 'The captured pause transition stops constant-force updates without stopping the effect. Menu force protection bounds that stale force. Physical pause/resume validation is pending.', 'PROTON_USE_EAC_LINUX=1 PROTON_ENABLE_WAYLAND=1 ' + launcher_options(data_dir), 'confirmed', 'untested'),
+        ('lmu', 'Le Mans Ultimate', 'LMU', 'partial', 'The captured pause transition stops constant-force updates without stopping the effect. Menu force protection bounds that stale force. The launcher reads saved protection settings and supplies LMU startup defaults. Physical pause/resume validation is pending.', launcher_options(data_dir), 'confirmed', 'untested'),
     ]
     fields = ('id', 'name', 'abbr', 'status', 'detail', 'launch_options', 'input_status', 'ffb_status')
     return [dict(zip(fields, row)) for row in rows]

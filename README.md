@@ -209,6 +209,9 @@ intended for games whose menus cause a constant force-feedback pull. It expires
 stale constant force after a configurable timeout, default 100 ms, and applies
 on the next game or relay start. Increase the timeout if driving force cuts out.
 Direct games use the installed `mozaproxy-protect -- %command%` launcher.
+Add it to Steam once. Each launch reads the app's saved toggle and timeout;
+later settings changes require a game restart, not a new launch line. LMU's
+startup defaults are supplied by the wrapper when Steam identifies the game.
 
 See [setup for ACC, LMU and other compatible games](docs/menu-force-protection.md).
 The option defaults off and currently supports the R25 evdev path. Physical

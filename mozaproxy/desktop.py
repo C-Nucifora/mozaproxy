@@ -289,7 +289,7 @@ class MainWindow(QMainWindow):
         command.setReadOnly(True)
         command.setAccessibleName('Menu force protection Steam launch options')
         protection_layout.addWidget(command)
-        protection_layout.addWidget(button('Copy protection launch options',
+        protection_layout.addWidget(button('Copy one-time Steam launch line',
                                            lambda: QApplication.clipboard().setText(command.text())))
         layout.addWidget(protection_box)
         scroll = QScrollArea()

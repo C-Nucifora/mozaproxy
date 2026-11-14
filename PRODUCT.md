@@ -21,7 +21,7 @@ Boxflat-like hardware functionality and coordinated ownership to avoid conflicts
 ## Operating Context
 Local Linux desktop and Steam/Proton. The user participates in driving tests.
 The app is installed for the current user, with a desktop menu entry and the
-`mozaproxy-app` launch command. Native Wayland launch and GUI interaction have
+`mozaproxy` launch command. Native Wayland launch and GUI interaction have
 been verified. App startup does not need a browser or a local web server.
 
 ## Capabilities and Constraints

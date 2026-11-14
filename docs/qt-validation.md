@@ -7,7 +7,7 @@ for the latest recorded game evidence and remaining validation limits.
 
 Validated on 2026-09-18 with PySide6 6.11.2 on Arch Linux/Hyprland.
 
-The installed `mozaproxy-app` launcher opens native Qt Widgets on Wayland.
+The installed `mozaproxy` launcher opens native Qt Widgets on Wayland.
 Hyprland reported a mapped Mozaproxy window. The desktop execution path calls
 AppState directly without an HTTP server or browser engine.
 

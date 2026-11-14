@@ -13,7 +13,7 @@ for argument in "$@"; do
         --permissions) install_permissions=true ;;
         -h|--help)
             echo "Usage: ./install.sh [--service] [--game-service] [--permissions]"
-            echo "Creates a venv, mozaproxy-app launcher, and desktop application entry."
+            echo "Creates a venv, mozaproxy command, and desktop application entry."
             echo "Optional relay and game-detection services are installed but not started."
             echo "--permissions installs uinput and MOZA base hidraw access rules using sudo."
             exit 0 ;;
@@ -51,7 +51,7 @@ import sys
 import time
 
 root = pathlib.Path(sys.argv[1])
-launcher = pathlib.Path.home() / '.local/bin/mozaproxy-app'
+launcher = pathlib.Path.home() / '.local/bin/mozaproxy'
 applications = pathlib.Path(os.environ.get('XDG_DATA_HOME') or pathlib.Path.home() / '.local/share') / 'applications'
 
 def install_file(target, content, mode):
@@ -76,10 +76,8 @@ def desktop_argument(value):
         value = value.replace(character, '\\' + character)
     return desktop_string('"' + value + '"')
 
-command = f'exec {shlex.quote(str(root / ".venv/bin/python"))} {shlex.quote(str(root / "tools/open-desktop.py"))} "$@"'
+command = f'exec {shlex.quote(str(root / ".venv/bin/python"))} {shlex.quote(str(root / "tools/open-mozaproxy.py"))} "$@"'
 install_file(launcher, '#!/bin/sh\n' + command + '\n', 0o755)
-protect_command = f'exec {shlex.quote(str(root / ".venv/bin/python"))} {shlex.quote(str(root / "tools/protect-game.py"))} "$@"'
-install_file(pathlib.Path.home() / '.local/bin/mozaproxy-protect', '#!/bin/sh\n' + protect_command + '\n', 0o755)
 desktop = '\n'.join([
     '[Desktop Entry]',
     'Type=Application',
@@ -94,6 +92,16 @@ desktop = '\n'.join([
     '',
 ])
 install_file(applications / 'mozaproxy.desktop', desktop, 0o644)
+# Retire only launchers generated for this checkout; preserve custom commands.
+for old_name, script in [('mozaproxy-app', 'open-desktop.py'), ('mozaproxy-protect', 'protect-game.py')]:
+    old = launcher.with_name(old_name)
+    expected = f'#!/bin/sh\nexec {shlex.quote(str(root / ".venv/bin/python"))} {shlex.quote(str(root / "tools" / script))} "$@"\n'
+    if old.is_file() and not old.is_symlink() and old.read_bytes() == expected.encode():
+        backup = old.with_name(f'{old.name}.backup-{time.time_ns()}')
+        old.rename(backup)
+        print(f'Retired {old}; previous file saved to {backup}')
+    elif old.exists() or old.is_symlink():
+        print(f'Custom or other-checkout launcher left unchanged: {old}')
 print(f'App launcher installed at {launcher}')
 print(f'Desktop entry installed at {applications / "mozaproxy.desktop"}')
 PY
@@ -135,7 +143,8 @@ fi
 
 echo "Ready. Inspect the wheel with: ./.venv/bin/python mozaproxy.py --diagnose"
 echo "Open Mozaproxy from your desktop application menu."
-echo "Or run: $HOME/.local/bin/mozaproxy-app"
+echo "Or run: mozaproxy"
+echo "Steam launch options: mozaproxy -- %command%"
 echo "Run the compact profile with: ./.venv/bin/python mozaproxy.py --profile compact -v"
 echo "Installation does not hide the physical wheel or enable the service."
 if [[ -f /etc/udev/rules.d/99-mozaproxy.rules ]]; then

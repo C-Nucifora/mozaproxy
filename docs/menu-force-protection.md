@@ -17,18 +17,22 @@ relay start. They do not mute a running game or start the relay.
 
 ## Direct games, including ACC and LMU
 
-Run `./install.sh` to install the app, `mozaproxy-protect` launcher and native
+Run `./install.sh` to install the app, `mozaproxy` launcher and native
 helper. Building the helper requires a C compiler. A missing helper stops a
 protected launch with an error instead of launching unprotected.
 
 Set this once in both ACC's and LMU's Steam launch options:
 
 ```text
-mozaproxy-protect -- %command%
+mozaproxy -- %command%
 ```
 
-The app's **Copy one-time Steam launch line** button uses the installed launcher's
-full path, so it also works when Steam's PATH does not include `~/.local/bin`.
+Run `mozaproxy` on its own to open the app. With a game command, it reads saved
+protection settings and launches the game. The app's **Copy one-time Steam launch
+line** button uses `mozaproxy` from PATH, falling back to the installed path when
+this process cannot find it. Steam also needs `~/.local/bin` on its PATH.
+The installer retires the old generated `mozaproxy-app` and `mozaproxy-protect`
+commands for this checkout. Replace those names in existing launch lines.
 The Games page gives the same command for ACC and LMU. Change the protection
 toggle and timeout in Mozaproxy, then restart the game. Leave the Steam line alone.
 The wrapper works with the desktop app closed.
@@ -52,8 +56,8 @@ They override the saved settings. The wrapper prints a warning when any are used
 For command-line diagnostics only, one-launch overrides remain available:
 
 ```sh
-mozaproxy-protect --menu-force-protection --menu-force-timeout-ms 100 -- game-command
-mozaproxy-protect --no-menu-force-protection -- game-command
+mozaproxy --menu-force-protection --menu-force-timeout-ms 100 -- game-command
+mozaproxy --no-menu-force-protection -- game-command
 ```
 
 Only the physical R25 evdev path is supported by the native helper. Do not use

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import sys
 import tempfile
 import threading
@@ -31,8 +32,13 @@ def library_path():
 
 
 def launcher_options(directory=None):
-    installed = Path.home() / '.local/bin/mozaproxy-protect'
-    command = [str(installed)] if installed.is_file() and os.access(installed, os.X_OK) else [sys.executable, str(Path(__file__).resolve())]
+    installed = Path.home() / '.local/bin/mozaproxy'
+    if shutil.which('mozaproxy'):
+        command = ['mozaproxy']
+    elif installed.is_file() and os.access(installed, os.X_OK):
+        command = [str(installed)]
+    else:
+        command = [sys.executable, str(Path(__file__).resolve())]
     default = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'mozaproxy'
     if directory is not None and Path(directory).resolve() != default.resolve():
         command.extend(['--data-dir', str(Path(directory).resolve())])
@@ -126,7 +132,8 @@ def game_environment(enabled, environment=None, timeout=DEFAULT_TIMEOUT_MS):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=DESCRIPTION)
+    parser = argparse.ArgumentParser(description=DESCRIPTION,
+                                     epilog='Run mozaproxy without arguments to open the app. Steam launch options: mozaproxy -- %command%')
     parser.add_argument('--menu-force-protection', action=argparse.BooleanOptionalAction,
                         default=None, help='Override the saved toggle for this launch')
     parser.add_argument('--menu-force-timeout-ms', type=timeout_ms, help='Stale-force timeout, 50–1000 ms; default 100')

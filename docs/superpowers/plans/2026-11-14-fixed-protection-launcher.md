@@ -39,3 +39,18 @@ subprocess checks confirmed successive saved timeouts, disabled protection, LMU
 ID selection, environment and argument preservation, source fallback, override
 warnings and invalid-config refusal. JavaScript syntax and diff checks passed.
 Independent review reported no actionable issues. No game or wheel test was run.
+
+## Command naming follow-up
+
+- [x] Install one `mozaproxy` dispatcher for the app and game launches. Retire the
+  generated old commands and remove the old game-entry script.
+- [x] Prefer PATH command lookup in launch suggestions and update current docs.
+- [x] Verify dispatch without hardware, argument/settings forwarding, command
+  lookup fallbacks, existing checks and the installed command. Review and commit.
+
+Follow-up verification: 205 tests passed, four skipped. Installed PATH dispatch,
+saved-settings forwarding, desktop entry, help, command fallbacks and legacy
+command removal passed. Review found UTF-8 decoding of custom executables during
+retirement; byte comparison fixes it. Isolated installer checks verified binary
+custom commands stay intact, generated wrappers are backed up and removed, and
+repeat installation is idempotent. Actual game startup remains untested.

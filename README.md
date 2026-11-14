@@ -14,7 +14,7 @@ or Proton version. See the [compatibility matrix](docs/compatibility.md).
 
 ```bash
 ./install.sh
-~/.local/bin/mozaproxy-app
+~/.local/bin/mozaproxy
 ```
 
 You can also open **Mozaproxy** from your desktop application menu. The installer
@@ -132,10 +132,10 @@ on normal completion or interruption. Event numbers can change after reconnect.
 
 ## Installation and physical-device visibility
 
-`./install.sh` creates a local venv, `~/.local/bin/mozaproxy-app`, and
+`./install.sh` creates a local venv, `~/.local/bin/mozaproxy`, and
 `~/.local/share/applications/mozaproxy.desktop`, respecting `XDG_DATA_HOME` for
 the desktop entry. It backs up launcher files before replacing changed content.
-If `~/.local/bin` is on your `PATH`, you can launch with `mozaproxy-app`.
+If `~/.local/bin` is on your `PATH`, you can launch with `mozaproxy`.
 
 `--service` also installs a user systemd unit for the optional relay, backing up
 a previous unit; it does not enable or start it. `--permissions` uses
@@ -208,7 +208,7 @@ An optional **Overview → Wheel protection → Menu force protection** toggle i
 intended for games whose menus cause a constant force-feedback pull. It expires
 stale constant force after a configurable timeout, default 100 ms, and applies
 on the next game or relay start. Increase the timeout if driving force cuts out.
-Direct games use the installed `mozaproxy-protect -- %command%` launcher.
+Direct games use the installed `mozaproxy -- %command%` launcher.
 Add it to Steam once. Each launch reads the app's saved toggle and timeout;
 later settings changes require a game restart, not a new launch line. LMU's
 startup defaults are supplied by the wrapper when Steam identifies the game.

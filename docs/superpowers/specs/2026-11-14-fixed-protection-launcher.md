@@ -19,3 +19,11 @@ they bypass app preferences. Document that changes take effect on the next launc
 Wheel profile Apply remains optional and off by default. No live FFB changes,
 relay changes, Steam-file writes while Steam runs, or hardware validation belong
 to this change.
+
+## Approved command naming follow-up
+
+The user requested the installed command from PATH and a single `mozaproxy` name.
+Without arguments it opens the desktop app; with a command it runs the saved-settings
+launcher. No compatibility aliases are retained. Retire old generated local
+launchers with backups, update the desktop entry, and leave game launch lines for
+the user to update. Preserve unrelated custom executables.

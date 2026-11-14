@@ -154,6 +154,11 @@ def main(argv=None):
         print('mozaproxy: command-line protection overrides are active; remove them from Steam to follow saved app settings',
               file=sys.stderr, flush=True)
     print('mozaproxy: menu force protection ' + (f'enabled ({timeout} ms)' if enabled else 'disabled'), file=sys.stderr, flush=True)
+    try:
+        from mozaproxy.lighting_service import start_if_enabled
+        start_if_enabled(args.data_dir)
+    except ImportError as exc:
+        print(f'mozaproxy: lighting unavailable: {exc}', file=sys.stderr, flush=True)
     os.execvpe(command[0], command, env)
 
 

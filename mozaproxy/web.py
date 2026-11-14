@@ -125,6 +125,10 @@ class Handler(BaseHTTPRequestHandler):
             result = app.game_setup.save(body, app.profiles.snapshot()[0])
         elif self.command == 'POST' and path == '/api/game-results':
             result = app.game_setup.record(body)
+        elif self.command == 'POST' and path == '/api/lighting':
+            from .lighting_service import start_if_enabled
+            result = app.lighting.save(body)
+            start_if_enabled(app.lighting.path.parent)
         elif self.command == 'POST' and path == '/api/protection':
             result = app.protection.save(body.get('enabled'), body.get('timeout_ms'))
         elif self.command == 'POST' and path == '/api/relay/stop':

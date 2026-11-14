@@ -20,6 +20,7 @@ from .game_mappings import default_mapping, validate_mapping, write_mapping_docu
 from .protection import ProtectionStore, launcher_options, timeout_ms
 from .game_setup import GameSetupStore, GameSession
 from .telemetry import TelemetryMonitor
+from .lighting_service import LightingStore
 
 ROOT = Path(__file__).resolve().parent.parent
 GAME_IDS = {'fh5', 'jdm', 'fs22', 'fs25', 'ac', 'acc', 'lmu', 'heat', 'beamng', 'ets2'}
@@ -447,6 +448,7 @@ class AppState:
         self.game_mappings = GameMappingStore(directory)
         self.protection = ProtectionStore(directory)
         self.game_setup = GameSetupStore(directory)
+        self.lighting = LightingStore(directory)
         self.game_session = GameSession()
         self.monitor = monitor if monitor is not None else PassiveMonitor()
         self.relay = relay if relay is not None else RelayProcess()
@@ -478,6 +480,7 @@ class AppState:
                     'protection': self.protection.snapshot(),
                     'game_setup': self.game_setup.snapshot(),
                     'telemetry': self.telemetry.status(),
+                    'lighting': self.lighting.snapshot(),
                     'diagnostics': {'items': diagnostics}}
 
     def start_game_mapping(self, game_id):

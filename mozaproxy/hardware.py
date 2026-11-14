@@ -12,13 +12,16 @@ from dataclasses import replace
 from pathlib import Path
 
 from .settings import SETTINGS, validate_settings
+from .base_lights import BaseLights
 
 
 def encode_packet(group, device, command, payload):
-    frame = (
-        bytes([0x7E, len(command) + len(payload), group, device]) + command + payload
-    )
-    return frame + bytes([(sum(frame) + 13) & 255])
+    header = bytes([0x7E, len(command) + len(payload)])
+    body = bytes([group, device]) + command + payload
+    # MOZA doubles body/checksum 0x7e bytes; the checksum covers stuffed bytes.
+    wire = header + body.replace(b'\x7e', b'\x7e\x7e')
+    checksum = bytes([(sum(wire) + 13) & 255])
+    return wire + checksum.replace(b'\x7e', b'\x7e\x7e')
 
 
 def extract_packet(buffer):
@@ -28,15 +31,28 @@ def extract_packet(buffer):
             continue
         if len(buffer) < 2:
             return None
-        size = buffer[1] + 5
-        if len(buffer) < size:
-            return None
-        frame = buffer[:size]
-        if (sum(frame[:-1]) + 13) & 255 != frame[-1]:
-            del buffer[0]
-            continue
-        del buffer[:size]
-        return frame[2], frame[3], bytes(frame[4:-1])
+        frame = bytearray(buffer[:2])
+        size, offset = buffer[1] + 5, 2
+        while len(frame) < size:
+            if offset >= len(buffer):
+                return None
+            value = buffer[offset]
+            if value == 0x7E:
+                if offset + 1 >= len(buffer):
+                    return None
+                if buffer[offset + 1] != 0x7E:
+                    del buffer[:offset]
+                    break
+                offset += 1
+            frame.append(value)
+            offset += 1
+        else:
+            checksum = (sum(frame[:-1]) + frame[2:-1].count(0x7E) * 0x7E + 13) & 255
+            if checksum != frame[-1]:
+                del buffer[0]
+                continue
+            del buffer[:offset]
+            return frame[2], frame[3], bytes(frame[4:-1])
     return None
 
 
@@ -82,6 +98,7 @@ class HardwareController:
         self._calibration_token = None
         self._io_lock = threading.RLock()
         self._state_lock = threading.RLock()
+        self._base_lights = BaseLights(encode_packet, extract_packet)
 
     def status(self):
         with self._state_lock:
@@ -97,6 +114,8 @@ class HardwareController:
                 telemetry_active=self._telemetry_active,
                 telemetry_restore_pending=self._telemetry_pending,
                 telemetry_error=self._telemetry_error,
+                base_telemetry_active=self._base_lights.active,
+                base_capabilities=dict(self._base_lights.capabilities),
             )
 
     def connect(self):
@@ -276,10 +295,17 @@ class HardwareController:
 
     def telemetry_end(self):
         with self._io_lock:
+            base_error = None
+            try:
+                self.base_telemetry_end()
+            except OSError as exc:
+                base_error = str(exc)
             if self._telemetry_restoring or not (self._telemetry_active or self._telemetry_pending):
+                if base_error:
+                    raise OSError(base_error)
                 return
             previous = self._telemetry_previous
-            clear_error = None
+            clear_error = base_error
             try:
                 self.telemetry_frame(0)
             except OSError as exc:
@@ -304,6 +330,26 @@ class HardwareController:
                 self._telemetry_restoring = False
             if clear_error:
                 raise OSError('Mode restored, but clearing LEDs failed: ' + clear_error)
+
+    def base_telemetry_begin(self):
+        with self._io_lock:
+            if self._serial is None or self._calibration.get('active'):
+                raise ValueError('Connect settings and finish calibration first')
+            return self._base_lights.begin(self._serial)
+
+    def base_telemetry_frame(self, color, mask):
+        if not self._io_lock.acquire(blocking=False):
+            return False
+        try:
+            if self._calibration.get('active'):
+                return False
+            return self._base_lights.frame(self._serial, color, mask)
+        finally:
+            self._io_lock.release()
+
+    def base_telemetry_end(self):
+        with self._io_lock:
+            self._base_lights.end(self._serial)
 
     def calibration_start(self, pedal, idle_confirmed=False):
         """Address-25 base-connected pedal procedure, never a profile setting."""

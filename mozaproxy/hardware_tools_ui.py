@@ -1,5 +1,7 @@
 """Explicit calibration and telemetry controls, separate from saved profiles."""
 import json
+from PySide6.QtCore import QSignalBlocker
+from .lighting_service import start_if_enabled
 from .telemetry import SOURCES
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QFormLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox, QPlainTextEdit, QMessageBox, QGroupBox, QHBoxLayout
 
@@ -10,6 +12,29 @@ class HardwareToolsPanel(QWidget):
         self.owner = owner
         layout = QVBoxLayout(self)
         layout.setSpacing(18)
+        managed = QGroupBox('Automatic LMU lighting')
+        managed_form = QFormLayout(managed)
+        self.managed_enabled = QCheckBox('Start RPM lighting with LMU')
+        self.base_alerts = QCheckBox('R25 base: flags and pit limiter')
+        self.activity_alerts = QCheckBox('Also show ABS and traction-control activity')
+        for widget in (self.managed_enabled, self.base_alerts, self.activity_alerts):
+            managed_form.addRow(widget)
+        self.rpm_start = QSpinBox()
+        self.rpm_start.setRange(0, 99)
+        self.rpm_start.setSuffix(' %')
+        self.rpm_end = QSpinBox()
+        self.rpm_end.setRange(1, 100)
+        self.rpm_end.setSuffix(' %')
+        managed_form.addRow('Bar starts at rev-limit percentage', self.rpm_start)
+        managed_form.addRow('Bar fills at rev-limit percentage', self.rpm_end)
+        save_lighting = QPushButton('Save lighting settings')
+        save_lighting.clicked.connect(self.save_lighting)
+        managed_form.addRow(save_lighting)
+        note = QLabel('Uses the existing Steam wrapper. The SDK reports rev limit, not optimal shift timing or dashboard LED thresholds. Defaults are 50–100%. Base effects require confirmed R25 support and telemetry mode; failures leave RPM lighting available. Disconnect manual settings before automatic lighting starts.')
+        note.setWordWrap(True)
+        managed_form.addRow(note)
+        self.managed_box = managed
+        layout.addWidget(managed)
         calibration = QGroupBox("Pedal calibration")
         calibration_layout = QVBoxLayout(calibration)
         layout.addWidget(calibration)
@@ -74,6 +99,16 @@ class HardwareToolsPanel(QWidget):
         self.status.setAccessibleName('Calibration and telemetry status')
         layout.addWidget(self.status)
 
+    def save_lighting(self):
+        patch = dict(enabled=self.managed_enabled.isChecked(), base_alerts=self.base_alerts.isChecked(),
+                     activity_alerts=self.activity_alerts.isChecked(), rpm_start_percent=self.rpm_start.value(),
+                     rpm_end_percent=self.rpm_end.value())
+        def save():
+            result = self.owner.backend.lighting.save(patch)
+            start_if_enabled(self.owner.backend.lighting.path.parent)
+            return result
+        self.owner._submit('lighting-settings', save)
+
     def calibrate(self):
         if QMessageBox.question(self, 'Calibrate pedal', 'Is driving stopped and are you ready to fully depress and release this pedal? Calibration changes its learned range.') != QMessageBox.StandardButton.Yes:
             return
@@ -88,6 +123,17 @@ class HardwareToolsPanel(QWidget):
     def refresh(self, state):
         hardware, telemetry = state.get('hardware', {}), state.get('telemetry', {})
         busy = self.owner.controller.busy or self.owner._pending_job is not None
+        lighting = state.get('lighting', {})
+        self.managed_box.setEnabled(hasattr(self.owner.backend, 'lighting') and not busy and not lighting.get('error'))
+        # Keep unsaved fields until the saved settings change.
+        signature = tuple(lighting.get(k) for k in ('enabled', 'base_alerts', 'activity_alerts', 'rpm_start_percent', 'rpm_end_percent'))
+        if getattr(self, '_lighting_signature', None) != signature:
+            for key, widget in [('enabled', self.managed_enabled), ('base_alerts', self.base_alerts), ('activity_alerts', self.activity_alerts)]:
+                with QSignalBlocker(widget):
+                    widget.setChecked(lighting.get(key, False))
+            self.rpm_start.setValue(lighting.get('rpm_start_percent', 50))
+            self.rpm_end.setValue(lighting.get('rpm_end_percent', 100))
+            self._lighting_signature = signature
         active = hardware.get('calibration', {}).get('active', False)
         available = hasattr(getattr(self.owner.backend, 'hardware', None), 'calibration_start')
         self.start_calibration.setEnabled(available and hardware.get('connected', False) and not active and not busy)
@@ -95,6 +141,6 @@ class HardwareToolsPanel(QWidget):
         self.start_telemetry.setEnabled(hasattr(self.owner.backend, 'telemetry') and not telemetry.get('running') and not active and not busy)
         self.stop_telemetry.setEnabled(bool(telemetry.get('running') or hardware.get('telemetry_restore_pending')) and not busy)
         self.output.setEnabled(state.get('integration', {}).get('mode') != 'system' and not telemetry.get('running'))
-        report = json.dumps(dict(calibration=hardware.get('calibration', {}), telemetry=telemetry, led_output_active=hardware.get('telemetry_active', False), restore_pending=hardware.get('telemetry_restore_pending', False), recovery_error=hardware.get('telemetry_error')), indent=2)
+        report = json.dumps(dict(managed_lighting=lighting, calibration=hardware.get('calibration', {}), telemetry=telemetry, led_output_active=hardware.get('telemetry_active', False), restore_pending=hardware.get('telemetry_restore_pending', False), recovery_error=hardware.get('telemetry_error')), indent=2)
         if self.status.toPlainText() != report:
             self.status.setPlainText(report)

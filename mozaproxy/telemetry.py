@@ -5,6 +5,8 @@ import struct
 import threading
 import time
 
+from .lighting_effects import AlertLights
+
 
 def decode_fh5(packet):
     # First 20 bytes of FH5's 324-byte Dash packet. Other game formats are not inferred.
@@ -48,9 +50,13 @@ def decode_packet(packet, source, maximum_rpm=None):
     if source not in BRIDGE_IDS or len(packet) != 24:
         raise ValueError('Expected a Mozaproxy telemetry bridge packet')
     magic, version, game, flags, session, sequence, rpm, maximum = struct.unpack('<4sBBHIIff', packet)
-    if magic != b'MZTP' or version != 1 or game != BRIDGE_IDS[source] or flags & ~1:
+    if magic != b'MZTP' or version != 1 or game != BRIDGE_IDS[source] or flags & ~(255 if source == 'lmu' else 1):
         raise ValueError('Telemetry bridge source or version does not match')
-    return rpm_sample(rpm, maximum, flags & 1, sequence, session)
+    sample = rpm_sample(rpm, maximum, flags & 1, sequence, session)
+    for name, bit, known in [('yellow', 2, 64), ('blue', 4, 64),
+                             ('limiter', 8, 128), ('abs_active', 16, 128), ('tc_active', 32, 128)]:
+        sample[name] = bool(flags & bit) if flags & known else None
+    return sample
 
 
 class TelemetryMonitor:
@@ -66,7 +72,7 @@ class TelemetryMonitor:
         with self.lock:
             return dict(self.state)
 
-    def start(self, port=20777, output=False, source='fh5', maximum_rpm=None):
+    def start(self, port=20777, output=False, source='fh5', maximum_rpm=None, *, base_alerts=False, activity_alerts=False, rpm_start_percent=50, rpm_end_percent=100):
         if type(port) is not int or not 1024 <= port <= 65535 or type(output) is not bool:
             raise ValueError('Choose a UDP port from 1024 to 65535 and a boolean output option')
         if not isinstance(source, str) or source not in SOURCES:
@@ -74,6 +80,10 @@ class TelemetryMonitor:
         if source == 'beamng' and (type(maximum_rpm) not in (int, float) or
                                    not math.isfinite(maximum_rpm) or not 100 <= maximum_rpm <= 100000):
             raise ValueError('Set the BeamNG RPM scale between 100 and 100000 for this vehicle')
+        if type(base_alerts) is not bool or type(activity_alerts) is not bool:
+            raise ValueError('Lighting options must be boolean')
+        if type(rpm_start_percent) is not int or type(rpm_end_percent) is not int or not 0 <= rpm_start_percent < rpm_end_percent <= 100:
+            raise ValueError('RPM thresholds must be whole percentages with start below end')
         with self.lock:
             if self.thread and self.thread.is_alive():
                 raise ValueError('Stop the existing telemetry listener first')
@@ -88,9 +98,19 @@ class TelemetryMonitor:
             except Exception:
                 sock.close()
                 raise
+            base_error = None
+            self.base_output = False
+            if output and base_alerts:
+                try:
+                    self.hardware.base_telemetry_begin()
+                    self.base_output = True
+                except (OSError, ValueError) as exc:
+                    base_error = str(exc)
+            self.alerts = AlertLights(activity_alerts)
+            self.rpm_start, self.rpm_end = rpm_start_percent, rpm_end_percent
             self.socket = sock
             self.stop_event.clear()
-            self.state = dict(running=True, output=output, port=port, source=source, maximum_rpm=maximum_rpm if source == 'beamng' else None, sample=None, error=None, stale=True)
+            self.state = dict(running=True, output=output, port=port, source=source, maximum_rpm=maximum_rpm if source == 'beamng' else None, sample=None, error=None, stale=True, base_output=self.base_output, base_error=base_error)
             self.thread = threading.Thread(target=self._receive, args=(sock, output, source, maximum_rpm), daemon=True, name='game-telemetry')
             self.thread.start()
         return self.status()
@@ -99,6 +119,7 @@ class TelemetryMonitor:
         last_valid, last_send, last_timestamp = 0, 0, None
         cleared = False
         last_stream = None
+        last_base = 0
         try:
             while not self.stop_event.is_set():
                 if output and not self.hardware.status().get('telemetry_active'):
@@ -109,10 +130,13 @@ class TelemetryMonitor:
                     if address[0] != '127.0.0.1':
                         continue
                     sample = decode_packet(packet, source, maximum_rpm)
+                    fraction = sample['rpm'] / sample['maximum'] * 100
+                    count = min(10, max(0, math.ceil((fraction - self.rpm_start) * 10 / (self.rpm_end - self.rpm_start)))) if sample['racing'] else 0
+                    sample.update(leds=count, mask=(1 << count) - 1)
                     timestamp = sample['timestamp']
                     stream = (address[1], sample.get('stream'))
                     if stream != last_stream:
-                        if last_stream is not None and time.monotonic() - last_valid <= 0.5:
+                        if last_stream is not None and stream[0] != last_stream[0] and time.monotonic() - last_valid <= 0.5:
                             raise ValueError('Another telemetry sender is already active')
                         last_timestamp = None
                     if timestamp is not None and last_timestamp is not None and not 0 < (timestamp - last_timestamp) % 2**32 < 2**31:
@@ -127,6 +151,17 @@ class TelemetryMonitor:
                 except (socket.timeout, ValueError):
                     sample = None
                 now = time.monotonic()
+                if self.base_output and now - last_base >= 0.1:
+                    try:
+                        color, mask = self.alerts.frame(self.state.get('sample'), now, now - last_valid > 0.5)
+                        self.hardware.base_telemetry_frame(color, mask)
+                    except (OSError, ValueError) as exc:
+                        with self.lock:
+                            self.state['base_error'] = str(exc)
+                            self.state['base_output'] = False
+                        self.base_output = False
+                        self.hardware.base_telemetry_end()
+                    last_base = now
                 if now - last_valid > 0.5:
                     with self.lock:
                         self.state['stale'] = True
@@ -148,7 +183,7 @@ class TelemetryMonitor:
                         self.state['error'] = str(exc)
             sock.close()
             with self.lock:
-                self.state.update(running=False, output=False, stale=True)
+                self.state.update(running=False, output=False, stale=True, base_output=False)
 
     def stop(self):
         self.stop_event.set()

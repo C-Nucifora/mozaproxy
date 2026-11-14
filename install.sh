@@ -13,7 +13,7 @@ for argument in "$@"; do
         --permissions) install_permissions=true ;;
         -h|--help)
             echo "Usage: ./install.sh [--service] [--game-service] [--permissions]"
-            echo "Creates a venv, mozaproxy command, and desktop application entry."
+            echo "Creates a venv, mozaproxy command, desktop entry, and disabled lighting service."
             echo "Optional relay and game-detection services are installed but not started."
             echo "--permissions installs uinput and MOZA base hidraw access rules using sudo."
             exit 0 ;;
@@ -92,6 +92,32 @@ desktop = '\n'.join([
     '',
 ])
 install_file(applications / 'mozaproxy.desktop', desktop, 0o644)
+if any(ord(c) < 32 for c in str(root)):
+    raise ValueError('Service installation path contains control characters')
+def unit_argument(value, command=False):
+    value = str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%')
+    return '"' + (value.replace('$', '$$') if command else value) + '"'
+lighting_unit = pathlib.Path(os.environ.get('XDG_CONFIG_HOME', pathlib.Path.home() / '.config')) / 'systemd/user/mozaproxy-lighting.service'
+install_file(lighting_unit, '\n'.join([
+    '[Unit]',
+    'Description=Mozaproxy managed game lighting',
+    '',
+    '[Service]',
+    'Type=simple',
+    'ExecStart=' + unit_argument(root / '.venv/bin/python', command=True) + ' -m mozaproxy.lighting_service',
+    'WorkingDirectory=' + str(root).replace('%', '%%'),
+    'Environment=PYTHONUNBUFFERED=1',
+    # Wine may share its server with the game. Only stop our Python process;
+    # the owned reader exits when its heartbeat lease expires.
+    'KillMode=process',
+    'TimeoutStopSec=30',
+    'Restart=on-failure',
+    'RestartSec=5',
+    '',
+    '[Install]',
+    'WantedBy=default.target',
+    '',
+]), 0o644)
 # Retire only launchers generated for this checkout; preserve custom commands.
 for old_name, script in [('mozaproxy-app', 'open-desktop.py'), ('mozaproxy-protect', 'protect-game.py')]:
     old = launcher.with_name(old_name)
@@ -104,7 +130,12 @@ for old_name, script in [('mozaproxy-app', 'open-desktop.py'), ('mozaproxy-prote
         print(f'Custom or other-checkout launcher left unchanged: {old}')
 print(f'App launcher installed at {launcher}')
 print(f'Desktop entry installed at {applications / "mozaproxy.desktop"}')
+print(f'Lighting service installed at {lighting_unit}; saved lighting defaults to off')
 PY
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload || echo "Reload user services when a user systemd session is available." >&2
+fi
 
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "${XDG_DATA_HOME:-$HOME/.local/share}/applications"

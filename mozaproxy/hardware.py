@@ -3,6 +3,7 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import fcntl
+import math
 import os
 import struct
 import termios
@@ -189,6 +190,7 @@ class HardwareController:
     def _close_port(self):
         with self._state_lock:
             port = self._serial
+            self._telemetry_active = False
             self._serial = None
             self._values = {}
         if port is not None:
@@ -467,7 +469,9 @@ class HardwareController:
                             if abs(self._read_setting(paired) - value) > 1:
                                 raise ValueError("Maximum angle readback did not match")
                         actual = self._read_setting(setting)
-                        evidence["actual"] = actual
+                        # Reports are served as strict JSON; keep a non-finite reply as text.
+                        finite = not isinstance(actual, float) or math.isfinite(actual)
+                        evidence["actual"] = actual if finite else str(actual)
                         evidence["outcome"] = "confirmed_mismatch"
                         validate_settings({key: actual})
                         expected = setting.decode(setting.encode(value))

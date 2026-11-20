@@ -71,7 +71,10 @@ the game's reported maximum RPM, not a verified per-car shift recommendation.
 ACC and other game alert support is not enabled by this watcher.
 
 On game exit or disable, the watcher stops output and restores previous lighting
-modes. Its helper receives a private heartbeat-file argument and exits when the
+modes. If the wheel disconnects first, the running watcher remembers the previous
+mode and restores it when the next managed session reconnects. Until then, the
+wheel may remain in external telemetry mode. The helper receives a private
+heartbeat-file argument and exits when the
 file disappears or has not been updated for ten seconds. This also handles a
 watcher crash. The service terminates only its own launcher process; it never
 stops Wine's shared server or signals the game's process group. Older helper

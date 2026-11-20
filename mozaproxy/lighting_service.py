@@ -191,7 +191,13 @@ class LightingWatcher:
             changed = settings != self.policy or bool(launch) != bool(self.launch) or (
                 launch and not launch.intersection(self.launch))
             if changed:
-                self.close()
+                try:
+                    self.close()
+                except (OSError, ValueError):
+                    # A lost wheel cannot restore its mode until it reconnects. Everything
+                    # else is released, so the next session restores it instead of stranding.
+                    if self.monitor.status().get('running') or not self.hardware.status().get('telemetry_restore_pending'):
+                        raise
                 self.policy = settings
                 self.failed, self.error = False, None
                 self.deadline, self.retry_at = time.monotonic() + 180, 0
@@ -234,6 +240,9 @@ class LightingWatcher:
                             raise ValueError('Game or lighting settings changed while connecting')
                         if self.lease is not None:
                             os.utime(self.lease, None)
+                        if status.get('telemetry_restore_pending'):
+                            # An earlier session lost the wheel before its mode was restored.
+                            self.hardware.telemetry_end()
                         self.monitor.stop()
                         self.monitor.start(source='lmu', output=True,
                                            base_alerts=settings['base_alerts'], activity_alerts=settings['activity_alerts'],

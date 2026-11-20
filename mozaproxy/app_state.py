@@ -1,7 +1,9 @@
 """Local app state, passive input observation, and explicitly owned processes."""
 
 from collections import deque
+from contextlib import contextmanager
 from copy import deepcopy
+import fcntl
 import json
 import math
 import os
@@ -82,6 +84,9 @@ class ProfileStore:
         self.path = Path(directory) / filename
         self.schema_provider = schema_provider
         self.lock = threading.RLock()
+        self._load()
+
+    def _load(self):
         self.profiles = []
         self.active = None
         self.error = None
@@ -119,13 +124,21 @@ class ProfileStore:
         return {'id': identifier, 'name': name.strip(), 'game_id': game,
                 'settings': validate_settings(data.get('settings', {}), self.schema_provider())}
 
+    @contextmanager
+    def _edit(self):
+        with self.lock:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.with_suffix('.lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                self._load()
+                if self.error:
+                    raise ValueError(self.error + '; preserve or repair the existing file before saving')
+                yield
+
     def _persist(self, profiles, active):
-        if self.error:
-            raise ValueError(self.error + '; preserve or repair the existing file before saving')
         content = json.dumps({'profiles': profiles, 'active_profile': active}, indent=2, allow_nan=False)
         if len(content.encode()) > 262144:
             raise ValueError('Profile storage exceeds 256 KiB')
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(prefix='.profiles-', suffix='.tmp', dir=self.path.parent)
         try:
             with os.fdopen(fd, 'w') as handle:
@@ -143,7 +156,7 @@ class ProfileStore:
             return deepcopy(self.profiles), self.active
 
     def save(self, data):
-        with self.lock:
+        with self._edit():
             profile = self._validate(data)
             profiles = [p for p in self.profiles if p['id'] != profile['id']] + [profile]
             if len(profiles) > 100:
@@ -152,13 +165,13 @@ class ProfileStore:
             return deepcopy(profile)
 
     def activate(self, identifier):
-        with self.lock:
+        with self._edit():
             if not any(p['id'] == identifier for p in self.profiles):
                 raise KeyError('Profile not found')
             self._persist(self.profiles, identifier)
 
     def delete(self, identifier):
-        with self.lock:
+        with self._edit():
             if not any(p['id'] == identifier for p in self.profiles):
                 raise KeyError('Profile not found')
             self._persist([p for p in self.profiles if p['id'] != identifier], None if self.active == identifier else self.active)

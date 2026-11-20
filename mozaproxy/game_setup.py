@@ -85,13 +85,13 @@ class GameSetupStore:
                 data = self.settings()  # Never replace a malformed document.
                 edit(data)
                 self.validate(data)
-                content = json.dumps(data, ensure_ascii=True, allow_nan=False)
+                content = json.dumps(data, ensure_ascii=True, allow_nan=False) + '\n'
                 if len(content) > 262144:
                     raise ValueError('Game setup exceeds 256 KiB')
                 fd, name = tempfile.mkstemp(prefix='.game-setup-', dir=self.path.parent)
                 try:
                     with os.fdopen(fd, 'w') as stream:
-                        stream.write(content + '\n')
+                        stream.write(content)
                         stream.flush()
                         os.fsync(stream.fileno())
                     os.replace(name, self.path)

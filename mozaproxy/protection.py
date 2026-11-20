@@ -38,7 +38,7 @@ def launcher_options(directory=None):
     elif installed.is_file() and os.access(installed, os.X_OK):
         command = [str(installed)]
     else:
-        command = [sys.executable, str(Path(__file__).resolve())]
+        command = [sys.executable, str(Path(__file__).resolve().parents[1] / 'tools/open-mozaproxy.py')]
     default = Path(os.environ.get('XDG_CONFIG_HOME', Path.home() / '.config')) / 'mozaproxy'
     if directory is not None and Path(directory).resolve() != default.resolve():
         command.extend(['--data-dir', str(Path(directory).resolve())])

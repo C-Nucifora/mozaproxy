@@ -1,0 +1,15 @@
+[Unit]
+Description=mozaproxy - clean virtual MOZA wheel with force-feedback relay
+Documentation=https://github.com/C-Nucifora/mozaproxy
+After=graphical-session.target
+
+[Service]
+Type=simple
+# %h is the user's home. Adjust ExecStart if you cloned elsewhere or want flags
+# (e.g. --buttons 24). install.sh writes the correct absolute paths for you.
+ExecStart=%h/Documents/GitHub/mozaproxy/.venv/bin/python %h/Documents/GitHub/mozaproxy/mozaproxy.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

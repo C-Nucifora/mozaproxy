@@ -1,0 +1,10 @@
+# Generic profile for controller-only / arcade titles, and for Proton games that
+# read the wheel's axes as binary but accept a controller (see
+# docs/PROTON-AXES.md). It wears the Xbox 360 face, so steering and pedals arrive
+# as XInput analog axes. Force feedback is rumble only.
+name = "arcade"
+mode = "B"
+notes = "Xbox 360 face for controller-only titles, or Proton games that read the wheel's axes as binary but accept a controller."
+
+[proton]
+steam_input = "off"

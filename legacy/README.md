@@ -6,6 +6,11 @@ run — with **force feedback intact**.
 
 No root at runtime. Pure Linux input plumbing.
 
+> **Legacy tool.** This is the original uinput relay (`mozactl` +
+> `mozaproxy.py`), kept under `legacy/` with its history. The current tool
+> lives at the repository root. Both installers write a user unit named
+> `mozaproxy.service`, so don't install both.
+
 ---
 
 ## The problem
@@ -66,7 +71,7 @@ virtual wheel.
 
 ```bash
 git clone https://github.com/C-Nucifora/mozaproxy.git ~/Documents/GitHub/mozaproxy
-cd ~/Documents/GitHub/mozaproxy
+cd ~/Documents/GitHub/mozaproxy/legacy
 ./install.sh
 ```
 

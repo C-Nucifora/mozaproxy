@@ -94,12 +94,16 @@ Then launch Forza with the wheel connected. Plain launch options are enough:
 PROTON_DLSS_UPGRADE=1 ENABLE_HDR_WSI=1 PROTON_ENABLE_WAYLAND=1 PROTON_ENABLE_HDR=1 %command%
 ```
 
-In the game, bind to the virtual wheel. With the `fh5` profile it carries the
-**real base's name** (e.g. "Gudsen MOZA R25 Ultra Base") because FH5 matches
-wheels against a supported-hardware list by USB identity — the profile sets
-`identity = "real"`, cloning the base's name/ids onto the slim virtual face
-(the same trick MOZA's Windows "Forza compatibility mode" firmware plays).
-Other profiles show **"MOZA R25 (mozaproxy)"**.
+In the game, bind to the virtual wheel. Its name depends on the profile, because
+some games key their behaviour off the wheel's USB identity:
+
+- `fh5` presents as **"MOZA R9 Base"** (`346e:0002`). FH5 matches wheels against
+  a supported-hardware list, and the base's own id `346e:0000` crashes it, so
+  the profile wears a supported id that launches.
+- `ac` sets `identity = "real"`, cloning the base's own name and ids (e.g.
+  "Gudsen MOZA R25 Ultra Base"), and exposes all 128 of its buttons, so
+  Assetto Corsa's saved wheel binding still matches.
+- Other profiles show **"MOZA R25 (mozaproxy)"**.
 
 ## Modes (per-game faces)
 

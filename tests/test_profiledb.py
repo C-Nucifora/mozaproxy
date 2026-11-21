@@ -570,6 +570,18 @@ class TestSeedProfiles:
             "--vendor", "0x346e", "--product", "0x0002",
         ]
 
+    def test_ac(self):
+        # AC binds its wheel by USB identity (controls.ini PGUID), so the seed
+        # clones the real base's identity onto the virtual wheel — the opposite
+        # of fh5, which the base's own id crashes. The binding was made against
+        # all 128 buttons, so the face keeps all of them (mode A's default 24
+        # would drop any bound button above the lowest 24 codes).
+        p = load_profile("ac")
+        assert p.identity_real is True
+        assert p.buttons == 128
+        assert daemon_args(p, {}) == ["--mode", "A", "--buttons", "128",
+                                      "--identity-real"]
+
     def test_arcade(self):
         p = load_profile("arcade")
         assert p.mode == "B"

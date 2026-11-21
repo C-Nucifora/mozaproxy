@@ -162,7 +162,8 @@ buttons = 24
                               # none of them exist on the base): keeps the count
                               # small while still including buttons high in the
                               # code space. Codes the base doesn't report are
-                              # skipped and logged (`mozactl logs`).
+                              # skipped and logged (`mozactl logs`). Find which
+                              # code is which with `mozactl watch --real`.
 identity = "real"             # clone the real base's USB identity (wheel whitelists)
                               # …or an explicit [identity] table with name/vendor/product
 ffb_gain = 80                 # clamp relayed FFB gain to 80%
@@ -211,6 +212,7 @@ mozactl modes                 # list modes
 mozactl list                  # list game profiles
 mozactl run <profile> -- CMD  # per-game launcher (Steam launch option)
 mozactl new <name> [--from P] # scaffold a user profile
+mozactl watch [--real|--virtual]  # live axis %-travel + button codes (see below)
 mozactl calibrate             # record real pedal axes (daemon stopped)
 mozactl status                # health of the whole pipeline
 mozactl stop                  # hide the wheel again
@@ -232,6 +234,44 @@ Useful flags:
 | `--name STR` | `MOZA R25 (mozaproxy)` | virtual device name |
 | `--vendor` / `--product` | `0x346e` / `0x0002` | virtual USB ids |
 | `--once` | off | don't supervise/re-attach; exit when device leaves |
+
+### Seeing what the wheel sends: `mozactl watch`
+
+Before changing a profile, look at what is actually being emitted:
+
+```bash
+mozactl watch --virtual                       # what GAMES see (daemon running)
+mozactl stop && mozactl watch --real          # the raw base (daemon stopped)
+mozactl watch --virtual --duration 15 --log   # + a shareable log file
+```
+
+With no flag it reads the virtual wheel while the daemon runs and the raw base
+otherwise. The daemon holds an exclusive grab on the base, and a grabbed node
+is silent to everyone else, so `--real` refuses to run until you `mozactl stop`.
+
+It shows every axis as a live %-travel bar and every button as it fires, with
+its evdev code — that is how you find the codes to list in `button_codes`. When
+it ends (Ctrl-C, or `--duration SECONDS`) it prints a per-axis summary:
+
+```
+  axis          samples  distinct  seen min..max    histogram over range
+  ABS_X            5300      3661  1..65534         [▄▂▁▁▁▁▁▁▁▁▁▆█▁▁▁▁▁▁▁▁▁▂▄]
+  ABS_Z             400         2  -32768..32767    [█                      █]
+  ABS_RZ              0         0  (no motion)      [                        ]
+```
+
+`distinct` is the verdict. A swept analog axis shows hundreds or thousands of
+distinct values and a histogram with no gaps (`ABS_X`); an axis that only ever
+reports its two ends shows about two (`ABS_Z`). If `watch --virtual` is analog
+but the game reads binary, the fault is downstream of mozaproxy (Proton or the
+game). Mode C and `axis_range` exist to work around exactly that, so try C
+next, then B. If the game still reads binary while `watch --virtual` stays
+analog in every mode, nothing in mozaproxy's axis output will fix it.
+
+`--log [FILE]` also writes a plain-text log (default
+`$XDG_RUNTIME_DIR/mozaproxy-watch.log`): the event stream, thinned to about
+50 lines a second per axis, followed by the same summary. Piped or redirected,
+`watch` prints button presses line by line and then the summary.
 
 ## How it hides the real device
 

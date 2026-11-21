@@ -9,6 +9,7 @@ mozactl - operate and diagnose the mozaproxy compatibility layer.
   mozactl modes                  list the presentation modes (faces)
   mozactl list                   list game profiles (shipped seeds + your own)
   mozactl run PROFILE -- CMD...  apply PROFILE's mode/env, then exec the game
+  mozactl watch                  live axis %-travel + button codes (get a signal)
   mozactl calibrate              interactive axis mapper -> calibration.toml
 
 The wheel is intentionally hidden from games at the udev layer, so it exists for
@@ -24,8 +25,11 @@ from __future__ import annotations
 
 import argparse
 import glob
+import heapq
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -41,6 +45,9 @@ STATEFILE = os.path.join(
 )
 LOGFILE = os.path.join(
     os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "mozaproxy.log"
+)
+WATCHLOG = os.path.join(
+    os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "mozaproxy-watch.log"
 )
 
 MOZA_VENDOR = 0x346E
@@ -142,6 +149,289 @@ def real_hidden(path: str) -> bool | None:
     return "ID_INPUT_JOYSTICK=1" not in out
 
 
+# ---- live watch helpers (pure; see cmd_watch) ------------------------------
+# `watch` reads a device node and shows axes as %-travel + buttons as they
+# fire. Two jobs it settles WITHOUT a game: (1) prove our virtual output is
+# smooth analog (so a binary-axis symptom is downstream in Proton/the game,
+# not our rescale), and (2) reveal which real button code each paddle/clutch
+# sends, so a profile can expose exactly those via button_codes.
+def _axis_pct(value: int, lo: int, hi: int) -> float:
+    """`value` as a 0..100 percentage of the [lo,hi] axis travel (clamped)."""
+    if hi == lo:
+        return 0.0
+    t = (value - lo) / (hi - lo)
+    t = 0.0 if t < 0.0 else 1.0 if t > 1.0 else t
+    return t * 100.0
+
+
+def _bar(pct: float, width: int = 24) -> str:
+    """A [####----] text meter for a 0..100 percentage."""
+    filled = int(round(pct / 100.0 * width))
+    filled = 0 if filled < 0 else width if filled > width else filled
+    return "[" + "#" * filled + "-" * (width - filled) + "]"
+
+
+def _code_name(table_name: str, code: int) -> str:
+    """Human name for an evdev code via ecodes.<table>, else a bare hex code.
+
+    ecodes maps a code to a str or, for aliased codes, a list of names; take
+    the first. table_name is "ABS", "KEY" or "BTN".
+    """
+    from evdev import ecodes
+    table = getattr(ecodes, table_name, {})
+    name = table.get(code)
+    if isinstance(name, (list, tuple)):
+        name = name[0] if name else None
+    return name or f"0x{code:x}"
+
+
+def _axis_name(code: int) -> str:
+    return _code_name("ABS", code)
+
+
+def _key_name(code: int) -> str:
+    """Button name preferring the BTN_* table, then KEY_*, then hex — with code."""
+    from evdev import ecodes
+    name = ecodes.BTN.get(code) or ecodes.KEY.get(code)
+    if isinstance(name, (list, tuple)):
+        name = name[0] if name else None
+    return f"{name} 0x{code:x}" if name else f"0x{code:x}"
+
+
+_SPARK_LEVELS = " ▁▂▃▄▅▆▇█"  # index 0 (empty bucket) .. 8 (fullest)
+
+
+def _axis_bucket(value: int, lo: int, hi: int, nbuckets: int) -> int:
+    """Which 0..nbuckets-1 histogram bucket `value` lands in over [lo,hi]."""
+    if hi == lo or nbuckets <= 0:
+        return 0
+    t = (value - lo) / (hi - lo)
+    idx = int(t * nbuckets)
+    return 0 if idx < 0 else nbuckets - 1 if idx >= nbuckets else idx
+
+
+def _spark(buckets: list[int]) -> str:
+    """A unicode sparkline for bucket counts; ONLY empty buckets render as spaces.
+
+    This is the analog-vs-binary tell at a glance: an analog sweep touches
+    every bucket, so the bar has no gaps, while a binary/saturated axis piles
+    all its mass on the two end buckets with spaces between.
+    """
+    peak = max(buckets) if buckets else 0
+    if peak == 0:
+        return " " * len(buckets)
+    top = len(_SPARK_LEVELS) - 1
+    out = []
+    for c in buckets:
+        # A populated bucket always gets a visible glyph. Scaling alone rounds
+        # small counts to the blank level, and an analog axis that DWELLS (a
+        # wheel held at centre, a pedal resting on its stop) then draws exactly
+        # like a binary one: tall ends, blanks between.
+        lvl = max(1, int(round(c / peak * top))) if c > 0 else 0
+        out.append(_SPARK_LEVELS[lvl])
+    return "".join(out)
+
+
+def _new_axis_stats(nbuckets: int) -> dict:
+    return {"n": 0, "min": None, "max": None, "distinct": set(),
+            "buckets": [0] * nbuckets}
+
+
+_DISTINCT_CAP = 20000  # bound memory; this many distinct values is plainly analog
+
+
+def _record_axis(st: dict, value: int, lo: int, hi: int) -> None:
+    """Fold one axis sample into its running stats (see _watch_summary)."""
+    st["n"] += 1
+    st["min"] = value if st["min"] is None else min(st["min"], value)
+    st["max"] = value if st["max"] is None else max(st["max"], value)
+    if len(st["distinct"]) < _DISTINCT_CAP:
+        st["distinct"].add(value)
+    st["buckets"][_axis_bucket(value, lo, hi, len(st["buckets"]))] += 1
+
+
+def _watch_summary(axes: list[tuple[str, dict]], buttons_seen: list[str]) -> list[str]:
+    """The end-of-run per-axis table: samples, distinct values, range, histogram.
+
+    `distinct` is the analog-vs-binary verdict in one number: a swept analog
+    axis shows hundreds or thousands of distinct values and a filled
+    histogram, a binary one shows about two with all its mass at the ends.
+    Written to the --log file and printed when the watch ends, so the verdict
+    survives a pipe (off a TTY there are no live bars to look at).
+    """
+    # Column widths keep every row within 78 columns, so the table survives an
+    # 80-column terminal without wrapping through the histogram.
+    lines = ["SUMMARY — axis travel seen this session",
+             f"{'axis':<12} {'samples':>8} {'distinct':>9}  "
+             f"{'seen min..max':<16} histogram over range"]
+    for name, st in axes:
+        dcount = len(st["distinct"])
+        dstr = f"{dcount}" + ("+" if dcount >= _DISTINCT_CAP else "")
+        seen = f"{st['min']}..{st['max']}" if st["n"] else "(no motion)"
+        lines.append(f"{name:<12} {st['n']:>8} {dstr:>9}  "
+                     f"{seen:<16} [{_spark(st['buckets'])}]")
+    lines.append("~2 distinct, mass only at the ends = BINARY; "
+                 "many distinct, no gaps = analog")
+    if buttons_seen:
+        lines.append("buttons pressed: " + ", ".join(buttons_seen))
+    return lines
+
+
+def _is_moza_node(node: dict) -> bool:
+    return node.get("vendor") == MOZA_VENDOR or "mozaproxy" in node.get("name", "").lower()
+
+
+def _choose_watch_node(nodes: list[dict], want: str | None = None,
+                       virtual_name: str | None = None) -> dict | None:
+    """Pick which node `watch` should read.
+
+    node dicts carry name/vendor/phys and optional has_abs/has_ff/product. A
+    MOZA node is real if usb-backed, virtual otherwise (identity cloning makes
+    name/ids identical, so transport is the only reliable discriminator — same
+    rule as the daemon's usb_backed). Auto prefers the VIRTUAL node: while the
+    daemon runs it holds an exclusive grab on the real node, so only the
+    virtual node (what games actually see) still emits — and reading it
+    confirms our output. With the daemon down, fall back to the real node (raw
+    hardware, e.g. to discover paddle codes).
+
+    `virtual_name` is the running daemon's explicit --name, if it has one: a
+    profile's [identity] table can dress the virtual device as anything (an
+    Xbox pad, another vendor's wheel), and then neither the MOZA vendor id nor
+    "mozaproxy" in the name identifies it — only that recorded name does.
+    """
+    from mozaproxy import usb_backed
+
+    def named_virtual(n: dict) -> bool:
+        return (bool(virtual_name) and n.get("name") == virtual_name
+                and not usb_backed(n.get("phys")))
+
+    ours = [n for n in nodes
+            if (_is_moza_node(n) or named_virtual(n)) and n.get("has_abs", True)]
+    # The base is the node with force feedback and the base's product id; a
+    # MOZA accessory on its own USB cable (pedals, shifter) also has axes and
+    # must not be mistaken for it.
+    real = sorted((n for n in ours if usb_backed(n.get("phys"))),
+                  key=lambda n: (not n.get("has_ff", False),
+                                 n.get("product", REAL_PRODUCT) != REAL_PRODUCT))
+    virt = sorted((n for n in ours if not usb_backed(n.get("phys"))),
+                  key=lambda n: not named_virtual(n))
+    if want == "real":
+        return real[0] if real else None
+    if want == "virtual":
+        return virt[0] if virt else None
+    return (virt or real or [None])[0]
+
+
+def _fit(text: str, width: int) -> str:
+    """Clip plain text to `width` columns, marking a cut with an ellipsis."""
+    if width <= 0:
+        return ""
+    return text if len(text) <= width else text[:width - 1] + "…"
+
+
+def _watch_frame(axes: list[tuple[str, int, int, int]], pressed: list[str],
+                 recent: list[tuple[str, str]], cols: int, rows: int,
+                 ) -> list[tuple[str, str]]:
+    """The live frame as (SGR colour code or "", plain text) lines.
+
+    Pure so the layout rules are testable: every line is clipped to `cols`,
+    and the frame is never taller than `rows - 1` — it is redrawn in place by
+    moving the cursor back up over it, which only works while the whole frame
+    fits on screen. The recent-events list gives way first; if the axes alone
+    do not fit, the tail of the axis list is folded into a one-line note and
+    the buttons line is kept (finding which code a paddle sends is half of
+    what `watch` is for).
+
+    axes: (name, value, min, max); recent: (colour code, text), newest first.
+    """
+    budget = max(3, rows - 1)
+    barw = max(6, min(24, cols - 54))
+    rows_ax = [f"  {name:<14} {val:>7}  {_bar(_axis_pct(val, lo, hi), barw)} "
+               f"{_axis_pct(val, lo, hi):5.1f}%   ({lo}..{hi})"
+               for name, val, lo, hi in axes]
+    room = budget - 2  # the blank line and the buttons line always show
+    if len(rows_ax) > room:
+        hidden = len(rows_ax) - (room - 1)
+        rows_ax = rows_ax[:max(0, room - 1)] + [
+            f"  … {hidden} more axes (terminal too short to show them)"]
+    lines: list[tuple[str, str]] = [("", ln) for ln in rows_ax]
+    lines.append(("", ""))
+    if pressed:
+        lines.append(("", "  buttons down: " + "  ".join(pressed)))
+    else:
+        lines.append(("90", "  buttons down: (none)"))
+    keep = min(len(recent), 8, budget - len(lines) - 1)
+    if keep > 0:
+        lines.append(("90", "  recent:"))
+        lines += [(code, "    " + text) for code, text in recent[:keep]]
+    return [(code, _fit(text, cols)) for code, text in lines]
+
+
+def _text_rows(lines: list[str], cols: int) -> int:
+    """Screen rows `lines` occupy once a `cols`-wide terminal wraps them."""
+    cols = max(1, cols)
+    return sum(max(1, -(-len(ln) // cols)) for ln in lines)
+
+
+class _NoEcho:
+    """Stop the terminal on `fd` echoing keystrokes, until close().
+
+    watch redraws in place by moving the cursor back up over its last frame.
+    An echoed Enter moves the cursor down a row, so every later frame lands
+    one row lower and leaves a stale line behind. Keys typed meanwhile are
+    discarded on close (TCSAFLUSH) instead of reaching the shell afterwards.
+    Ctrl-C still works (ISIG is untouched). A no-op when `fd` is no terminal.
+    """
+
+    def __init__(self, fd: int) -> None:
+        self.fd = fd
+        self.saved = None
+        try:
+            import termios
+            if os.isatty(fd):
+                self.saved = termios.tcgetattr(fd)
+                quiet = termios.tcgetattr(fd)
+                quiet[3] &= ~termios.ECHO
+                termios.tcsetattr(fd, termios.TCSANOW, quiet)
+        except Exception:  # termios.error is not an OSError
+            self.saved = None
+
+    def close(self) -> None:
+        saved, self.saved = self.saved, None
+        if saved is not None:
+            try:
+                import termios
+                termios.tcsetattr(self.fd, termios.TCSAFLUSH, saved)
+            except Exception:
+                pass
+
+
+class _WatchLog:
+    """The --log file. A failed write (disk full, file-size limit) stops the
+    logging and is reported once at the end; it never ends the watch."""
+
+    def __init__(self, f=None) -> None:
+        self.f = f
+        self.error: str | None = None
+
+    def write(self, text: str) -> None:
+        if self.f is None:
+            return
+        try:
+            self.f.write(text)
+        except OSError as e:
+            self.error = str(e)
+            self.close()
+
+    def close(self) -> None:
+        f, self.f = self.f, None
+        if f is not None:
+            try:
+                f.close()
+            except OSError as e:
+                self.error = self.error or str(e)
+
+
 def daemon_pids() -> list[int]:
     pids = []
     for c in glob.glob("/proc/[0-9]*/cmdline"):
@@ -180,6 +470,36 @@ def _read_state() -> dict | None:
     except (OSError, ValueError):
         return None
     return state if isinstance(state, dict) else None
+
+
+def _state_virtual_name(pids: list[int]) -> str | None:
+    """The explicit --name of the live, state-tracked daemon's virtual device.
+
+    None when no such daemon is running or it uses a mode's default name
+    (those contain "mozaproxy", or wear the MOZA vendor id, and are found
+    without help). The recorded argv is read with the daemon's own parser, so
+    every spelling it accepts (--name X, --name=X) is understood.
+    """
+    state = _read_state()
+    if not state or state.get("pid") not in pids:
+        return None
+    argv = state.get("argv")
+    if not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
+        return None
+    try:
+        import contextlib
+        import io
+        from mozaproxy import parse_args
+        with contextlib.redirect_stderr(io.StringIO()):
+            return parse_args(argv).name or None
+    except (SystemExit, Exception):  # argparse exits on argv it rejects
+        name = None
+        for i, arg in enumerate(argv):
+            if arg == "--name" and i + 1 < len(argv):
+                name = argv[i + 1]
+            elif arg.startswith("--name="):
+                name = arg.split("=", 1)[1]
+        return name or None
 
 
 def _clear_state() -> None:
@@ -617,6 +937,326 @@ def cmd_new(args) -> int:
     return 0
 
 
+def _seconds(s: str) -> float:
+    """argparse converter: a finite, non-negative number of seconds."""
+    try:
+        v = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{s!r} is not a number of seconds")
+    if not 0.0 <= v < float("inf"):  # also rejects nan
+        raise argparse.ArgumentTypeError(
+            f"seconds must be a finite number >= 0, got {s!r}")
+    return v
+
+
+def cmd_watch(args) -> int:
+    """Live-watch a node's axes (%-travel) and buttons (as they fire)."""
+    try:
+        rc = _watch(args)
+        # A reader that left early (`watch | head`) surfaces on this flush;
+        # caught here it is a quiet stop, not an "Exception ignored" at exit.
+        sys.stdout.flush()
+        return rc
+    except BrokenPipeError:
+        # The reader left. That is a normal way to stop, not an error. _watch
+        # has already cleaned up (and finished the log); point stdout at
+        # /dev/null so the interpreter's exit-time flush does not raise again.
+        try:
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        except (OSError, ValueError):
+            pass
+        return 0
+
+
+def _watch(args) -> int:
+    import collections
+    import selectors
+
+    import evdev
+    from evdev import ecodes
+    from mozaproxy import usb_backed
+
+    want = "real" if args.real else "virtual" if args.virtual else None
+    nodes = []
+    for d in _iter_evdev():
+        try:
+            caps = d.capabilities()
+            nodes.append({"path": d.path, "name": d.name,
+                          "vendor": d.info.vendor, "product": d.info.product,
+                          "phys": d.phys or "",
+                          "has_abs": ecodes.EV_ABS in caps,
+                          "has_ff": ecodes.EV_FF in caps})
+        except OSError:
+            continue  # unplugged between listing and querying; not ours anyway
+        finally:
+            d.close()
+
+    pids = daemon_pids()
+    node = _choose_watch_node(nodes, want, _state_virtual_name(pids))
+    if node is None:
+        if want == "virtual" and pids:
+            print(_c("31", "The daemon is running but its virtual device was not "
+                           "found — check: mozactl status / mozactl logs"))
+        elif want == "virtual":
+            print(_c("31", "No virtual wheel found — the daemon is not running "
+                           "(mozactl start / run)."))
+        elif want == "real":
+            print(_c("31", "No real MOZA base found — power the wheelbase on."))
+        else:
+            print(_c("31", "No MOZA (real or virtual) node found — power the "
+                           "base on and/or start the daemon."))
+        return 1
+
+    is_real = usb_backed(node["phys"])
+    if is_real and pids:
+        # A grabbed real node delivers events ONLY to the grabber, so we'd read
+        # silence. Say so instead of showing a frozen display.
+        print(_c("33", "The daemon is running and holds an exclusive grab on the "
+                       "real node — it will read as SILENT."))
+        print("Watch what games see instead: " + _c("1", "mozactl watch --virtual")
+              + "   (or " + _c("1", "mozactl stop") + " to read raw hardware).")
+        return 1
+
+    try:
+        dev = evdev.InputDevice(node["path"])
+    except OSError as e:
+        print(_c("31", f"could not open {node['path']}: {e}"))
+        return 1
+
+    caps = dev.capabilities(absinfo=True)
+    absinfo = {code: info for code, info in caps.get(ecodes.EV_ABS, [])}
+    axis_val = {code: info.value for code, info in absinfo.items()}
+    pressed: set[int] = set()
+    recent: collections.deque = collections.deque(maxlen=8)
+    stats: dict = {code: _new_axis_stats(24) for code in absinfo}
+    buttons_seen: list[str] = []
+    kind = "REAL hardware" if is_real else "VIRTUAL (what games see)"
+
+    # Optional shareable plaintext log: a downsampled event stream plus the
+    # end-of-run per-axis summary (see _watch_summary).
+    log = _WatchLog()
+    if args.log:
+        try:
+            # Line-buffered: a killed watch still leaves every line it logged.
+            log = _WatchLog(open(args.log, "w", buffering=1))
+        except OSError as e:
+            dev.close()
+            print(_c("31", f"could not open log {args.log!r}: {e}"))
+            return 1
+        log.write(
+            f"# mozaproxy watch log\n"
+            f"# node: {kind} '{node['name']}' {node['path']} "
+            f"vendor=0x{node['vendor']:04x}\n"
+            f"# axes: " + ", ".join(f"{_axis_name(c)}[{absinfo[c].min}..{absinfo[c].max}]"
+                                    for c in sorted(absinfo)) + "\n"
+            f"# columns: +seconds  KIND  name  value  pct\n")
+
+    # The header, as (plain text, rendered) pairs: plain text measures how
+    # many rows it wraps to, so the frame below it can be sized to fit.
+    head = [
+        ("mozaproxy watch  " + kind, _c("1", "mozaproxy watch") + "  " + _c("36", kind)),
+        (f"  '{node['name']}'  {node['path']}", f"  '{node['name']}'  {node['path']}"),
+        ("  Move each axis / press each button.  Ctrl-C to stop.",
+         "  Move each axis / press each button.  Ctrl-C to stop."),
+    ]
+    note = ("  This is the raw base: note the code each paddle/button sends."
+            if is_real else
+            "  Analog here = our output is clean; binary in game is downstream.")
+    head.append((note, note))
+    if args.log:
+        head.append((f"  Logging to {args.log} — share this file.",
+                     "  Logging to " + _c("1", args.log) + " — share this file."))
+    head.append(("", ""))
+
+    # The frame is redrawn IN PLACE below the header: after a draw the cursor
+    # sits on the line under the frame, so the next draw first moves back up
+    # over it. The frame is sized so header + frame fit the terminal, which
+    # keeps the header (which node this is, how to stop) on screen.
+    drawn = 0
+    size = None  # terminal size at the last draw
+
+    def draw() -> None:
+        nonlocal drawn, size
+        cols, rows = shutil.get_terminal_size((80, 24))
+        out = []
+        if size is not None and (cols, rows) != size:
+            # Resized: terminals reflow the old lines, so the frame's top is no
+            # longer `drawn` rows up. Start over on a clean screen rather than
+            # leave fragments of the old frame behind.
+            out.append("\033[H\033[2J")
+            out += [rendered + "\n" for _, rendered in head]
+            drawn = 0
+        size = (cols, rows)
+        frame = _watch_frame(
+            [(_axis_name(c), axis_val.get(c, absinfo[c].value),
+              absinfo[c].min, absinfo[c].max) for c in sorted(absinfo)],
+            [_key_name(c) for c in sorted(pressed)], list(recent), cols,
+            rows - _text_rows([plain for plain, _ in head], cols))
+        out.append(f"\033[{drawn}A\r" if drawn else "\r")
+        out += [(_c(code, text) if code else text) + "\033[K\n"
+                for code, text in frame]
+        out.append("\033[J")  # drop leftovers if the frame just got shorter
+        sys.stdout.write("".join(out))
+        sys.stdout.flush()
+        drawn = len(frame)
+
+    # Log stream. Axis lines are thinned to one per axis per 20 ms, and the
+    # newest value a thinning skipped is written once that axis's 20 ms is up
+    # (or when idle, or at exit), so every axis ends on where it came to rest.
+    # Every line carries the time it was READ; held lines pass through a small
+    # reorder buffer that releases them in time order once they are 25 ms old
+    # (more than the 20 ms window), so the file stays chronological.
+    t0 = time.monotonic()  # monotonic: a clock step must not end or extend a run
+    last_logged: dict[int, float] = {}       # axis -> read time of its last line
+    pending: dict[int, tuple[int, float]] = {}  # axis -> (value, read time) held back
+    held: list[tuple[float, int, str]] = []  # (read time, seq, line) awaiting release
+    seq = 0
+
+    def emit(when: float, text: str) -> None:
+        nonlocal seq
+        if log.f is not None:
+            seq += 1
+            heapq.heappush(held, (when, seq, text))
+
+    def log_axis(code: int, value: int, when: float) -> None:
+        info = absinfo[code]
+        emit(when, f"+{when - t0:8.3f}  ABS  {_axis_name(code):<12} "
+                   f"{value:>7} {_axis_pct(value, info.min, info.max):5.1f}%\n")
+        last_logged[code] = when
+        pending.pop(code, None)
+
+    def settle_log(now: float, force: bool = False) -> None:
+        for code, (value, when) in sorted(pending.items(), key=lambda kv: kv[1][1]):
+            if force or now - last_logged.get(code, -1.0) >= 0.02:
+                log_axis(code, value, when)
+        while held and (force or held[0][0] <= now - 0.025):
+            log.write(heapq.heappop(held)[2])
+
+    def on_term(_signum, _frame):
+        raise KeyboardInterrupt  # SIGTERM (timeout(1), systemd) ends like Ctrl-C
+
+    try:
+        stdin_fd = sys.stdin.fileno()
+    except (AttributeError, OSError, ValueError):
+        stdin_fd = -1
+    sel = selectors.DefaultSelector()
+    sel.register(dev.fileno(), selectors.EVENT_READ)
+    deadline = t0 + args.duration if args.duration else None
+    last_draw = 0.0
+    dirty = False     # the screen is behind the state
+    error = None      # reported AFTER the final frame, so it is not drawn over
+    old_term = None
+    noecho = None
+    rc = 0
+    try:
+        try:
+            old_term = signal.signal(signal.SIGTERM, on_term)
+        except ValueError:
+            pass  # not the main thread: leave signal handling to the embedder
+        if _TTY:
+            noecho = _NoEcho(stdin_fd)
+        for _, rendered in head:
+            print(rendered)
+        if _TTY:
+            draw()
+        else:
+            sys.stdout.flush()  # piped: show the header now, not at exit
+        while True:
+            now = time.monotonic()
+            if deadline is not None and now >= deadline:
+                break
+            timeout = 0.2
+            if deadline is not None:
+                timeout = max(0.0, min(timeout, deadline - now))
+            if not sel.select(timeout=timeout):
+                # Quiet: bring the log and the screen up to the final values.
+                settle_log(time.monotonic(), force=True)
+                if _TTY and dirty:
+                    draw()
+                    dirty = False
+                continue
+            try:
+                events = list(dev.read())
+            except BlockingIOError:
+                continue
+            except OSError as e:
+                error = f"device read error: {e}"
+                rc = 1
+                break
+            now = time.monotonic()
+            for ev in events:
+                if ev.type == ecodes.EV_ABS and ev.code in absinfo:
+                    v = ev.value
+                    axis_val[ev.code] = v
+                    info = absinfo[ev.code]
+                    _record_axis(stats[ev.code], v, info.min, info.max)
+                    # The stats above are exact; only the log stream is thinned.
+                    if now - last_logged.get(ev.code, -1.0) >= 0.02:
+                        log_axis(ev.code, v, now)
+                    else:
+                        pending[ev.code] = (v, now)
+                elif ev.type == ecodes.EV_KEY:
+                    name = _key_name(ev.code)
+                    if ev.value:
+                        pressed.add(ev.code)
+                        recent.appendleft(("32", f"press   {name}"))
+                        if name not in buttons_seen:
+                            buttons_seen.append(name)
+                    else:
+                        pressed.discard(ev.code)
+                        recent.appendleft(("90", f"release {name}"))
+                    emit(now, f"+{now - t0:8.3f}  KEY  "
+                              f"{'press  ' if ev.value else 'release'} {name}\n")
+                    if not _TTY:
+                        # No cursor control off a TTY: stream button
+                        # transitions, flushed so a pipe sees each one live.
+                        print(f"{'press' if ev.value else 'release'} {name}",
+                              flush=True)
+            settle_log(now)
+            if _TTY:
+                dirty = True
+                if now - last_draw >= 0.03:  # ~30fps cap to avoid flicker
+                    draw()
+                    last_draw = now
+                    dirty = False
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Runs on every way out, including a vanished stdout (BrokenPipeError
+        # passes through to cmd_watch): nothing in here may print.
+        if noecho is not None:
+            noecho.close()
+        if old_term is not None:
+            signal.signal(signal.SIGTERM, old_term)
+        summary = _watch_summary(
+            [(_axis_name(code), stats[code]) for code in sorted(absinfo)],
+            buttons_seen)
+        try:
+            settle_log(time.monotonic(), force=True)
+            log.write("#\n" + "".join(f"# {ln}\n" for ln in summary))
+        finally:
+            log.close()
+            sel.close()
+            dev.close()
+
+    if _TTY:
+        draw()
+    if error:
+        print(_c("31", error))
+    # The verdict, on stdout too: off a TTY there were no live bars, and on one
+    # the distinct-value count is still the number to read.
+    print()
+    for ln in summary:
+        print("  " + ln)
+    if args.log:
+        if log.error:
+            print("\n" + _c("33", f"Log {args.log} is incomplete — writing it "
+                                  f"failed: {log.error}"))
+        else:
+            print("\nWrote " + _c("1", args.log) + "  — share this file.")
+    return rc
+
+
 def cmd_calibrate(_args) -> int:
     if daemon_pids():
         # The daemon's exclusive grab starves other readers; we would sample
@@ -695,6 +1335,25 @@ def main(argv=None) -> int:
     lg.add_argument("-n", "--lines", type=int, default=50,
                     help="how many trailing lines to show (default 50)")
     lg.set_defaults(fn=cmd_logs)
+    w = sub.add_parser("watch", help="live-watch axes (%%-travel) and button codes")
+    wg = w.add_mutually_exclusive_group()
+    wg.add_argument("--virtual", action="store_true",
+                    help="read the virtual node (what games see; default when "
+                         "the daemon is running)")
+    wg.add_argument("--real", action="store_true",
+                    help="read the raw base node (needs the daemon stopped; "
+                         "use it to discover which code each paddle/button sends)")
+    w.add_argument("--duration", type=_seconds, default=0.0, metavar="SECONDS",
+                   help="stop after this many seconds (default 0: run until "
+                        "Ctrl-C)")
+    w.add_argument("--log", nargs="?", const=WATCHLOG, default=None, metavar="FILE",
+                   # argparse %-formats help text, and WATCHLOG comes from
+                   # $XDG_RUNTIME_DIR: escape it or a "%" in that path breaks
+                   # every mozactl invocation (see the smoke tests).
+                   help="also write a clean, shareable plaintext log (bare --log "
+                        f"defaults to {WATCHLOG.replace('%', '%%')}) with an "
+                        "end-of-run per-axis analog-vs-binary summary")
+    w.set_defaults(fn=cmd_watch)
     sub.add_parser("calibrate",
                    help="interactively map wheel/pedal axes (writes calibration.toml)"
                    ).set_defaults(fn=cmd_calibrate)

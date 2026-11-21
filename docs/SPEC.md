@@ -164,6 +164,9 @@ mozactl mode <A|B|C|D> [opts]  # (re)start daemon rendering a mode; opts: --butt
 mozactl list                   # profiles in the DB
 mozactl run <profile> -- CMD…  # ensure mode+env for <profile>, then exec CMD (Steam launch option)
 mozactl stop                   # drop to passthrough (Mode D)
+mozactl watch [--real|--virtual] [--duration S] [--log [FILE]]
+                               # live axis %-travel + button codes; ends with a per-axis
+                               # analog-vs-binary summary (get a signal before tuning)
 mozactl calibrate              # interactive axis map/deadzone helper → writes a profile
 ```
 

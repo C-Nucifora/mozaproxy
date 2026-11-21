@@ -138,6 +138,71 @@ class TestStartForwardsDaemonArgs:
         assert capsys.readouterr().err == ""
 
 
+class TestDaemonCmdline:
+    """Which processes `stop`/`run` treat as the daemon (and so signal)."""
+
+    @pytest.mark.parametrize("cmdline", [
+        "/x/.venv/bin/python /x/mozaproxy.py --mode A",      # _spawn_daemon
+        ".venv/bin/python mozaproxy.py -v",                  # run.sh
+        "/usr/bin/python3 ./mozaproxy.py",                   # ./mozaproxy.py
+        "/usr/bin/python3.14 -u /x/mozaproxy.py --once",
+        # Interpreter options that take a value, as a debugging session might
+        # start it: the value is not the script.
+        "/x/.venv/bin/python -X dev mozaproxy.py -v",
+        "/x/.venv/bin/python -W error mozaproxy.py",
+        "/x/.venv/bin/python -Xfaulthandler -Werror mozaproxy.py",
+        "/x/.venv/bin/python -uX faulthandler mozaproxy.py",
+        "/x/.venv/bin/python -uXdev mozaproxy.py",
+        "/x/.venv/bin/python --check-hash-based-pycs never mozaproxy.py",
+        "/x/.venv/bin/python -B -- mozaproxy.py",
+    ])
+    def test_matches_the_daemon(self, cmdline):
+        assert mozactl._is_daemon_cmdline(cmdline.encode().split())
+
+    @pytest.mark.parametrize("cmdline", [
+        # Another tool whose script name merely ENDS in mozaproxy.py: the old
+        # substring match would SIGTERM it on `mozactl stop`.
+        "/w/.venv/bin/python /w/tools/open-mozaproxy.py",
+        "/w/.venv/bin/python /w/tools/open-mozaproxy.py -- proton run game.exe",
+        "/w/.venv/bin/python -m mozaproxy.game_service",
+        # -c/-m run a command or module, never the script, also when the
+        # module or command is attached (the rest of the entry is no flags).
+        "/x/.venv/bin/python -m pdb mozaproxy.py",
+        "/x/.venv/bin/python -um pdb mozaproxy.py",
+        "/x/.venv/bin/python -mpdb mozaproxy.py",
+        "/x/.venv/bin/python -c pass mozaproxy.py",
+        "/x/.venv/bin/python -cpass mozaproxy.py",
+        # A value is not the script, even when it is named like it.
+        "/x/.venv/bin/python -W mozaproxy.py other.py",
+        "/x/.venv/bin/python - mozaproxy.py",               # script on stdin
+        "vim mozaproxy.py",
+        "/x/.venv/bin/python /x/mozactl.py run jdm -- mozaproxy.py",
+        "/x/.venv/bin/python",
+        "/x/.venv/bin/python -X",
+        "",
+    ])
+    def test_ignores_everything_else(self, cmdline):
+        assert not mozactl._is_daemon_cmdline(cmdline.encode().split())
+
+    def test_daemon_pids_reads_proc(self, tmp_path):
+        # The wiring around the match: /proc/<pid>/cmdline holds NUL-terminated
+        # entries, and only numeric directories are processes.
+        procs = {
+            "101": b"/x/.venv/bin/python\0/x/mozaproxy.py\0--mode\0A\0",
+            "102": b"/w/.venv/bin/python\0/w/tools/open-mozaproxy.py\0--\0game.exe\0",
+            "103": b"/usr/bin/python3\0-W\0\0/x/mozaproxy.py\0",  # -W '' (empty value)
+            "104": b"vim\0mozaproxy.py\0",
+            "105": b"",                                             # kernel thread
+            "7x": b"/x/.venv/bin/python\0/x/mozaproxy.py\0",        # not a pid
+            "self": b"/x/.venv/bin/python\0/x/mozaproxy.py\0",
+        }
+        for pid, cmdline in procs.items():
+            (tmp_path / pid).mkdir()
+            (tmp_path / pid / "cmdline").write_bytes(cmdline)
+        (tmp_path / "106" / "cmdline").mkdir(parents=True)        # unreadable
+        assert sorted(mozactl.daemon_pids(str(tmp_path))) == [101, 103]
+
+
 class TestDaemonParser:
     def test_help_renders(self, capsys):
         out = _help_exits_cleanly(mozaproxy.parse_args, ["--help"], capsys)

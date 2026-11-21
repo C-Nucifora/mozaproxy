@@ -432,18 +432,59 @@ class _WatchLog:
                 self.error = self.error or str(e)
 
 
-def daemon_pids() -> list[int]:
+def _is_daemon_cmdline(parts: list[bytes]) -> bool:
+    """True if a /proc cmdline is the daemon: `<python> [opts] .../mozaproxy.py ...`.
+
+    Every launcher runs it that way (_spawn_daemon, run.sh, the systemd unit,
+    and a direct ./mozaproxy.py via its env shebang). Matching the script's
+    exact name, rather than "mozaproxy.py" anywhere in the command line, keeps
+    `stop`/`run` from signalling unrelated processes: an editor on the file, or
+    another tool whose script merely ends in it (open-mozaproxy.py).
+
+    The interpreter's options are skipped the way CPython parses them, so the
+    script slot is found even when an option takes a value (-X dev, -W error,
+    attached as in -Xdev, or inside a cluster as in -uX dev). -c and -m run a
+    command or module rather than a script, so they never count.
+    """
+    if not parts or b"python" not in os.path.basename(parts[0]):
+        return False
+    args = iter(parts[1:])
+    for arg in args:
+        if arg == b"--":                        # end of interpreter options
+            arg = next(args, b"")
+        elif arg.startswith(b"--"):             # long option; just this one takes a value
+            if arg == b"--check-hash-based-pycs":
+                next(args, None)
+            continue
+        elif arg.startswith(b"-") and arg != b"-":
+            opts = arg[1:]
+            for i in range(len(opts)):
+                opt = opts[i:i + 1]
+                if opt in (b"c", b"m"):
+                    return False
+                if opt in (b"W", b"X"):         # the rest, or else the next entry, is the value
+                    if i + 1 == len(opts):
+                        next(args, None)
+                    break
+            continue
+        return os.path.basename(arg) == b"mozaproxy.py"
+    return False
+
+
+def daemon_pids(proc: str = "/proc") -> list[int]:
     pids = []
-    for c in glob.glob("/proc/[0-9]*/cmdline"):
+    for c in glob.glob(os.path.join(proc, "[0-9]*", "cmdline")):
         try:
-            parts = open(c, "rb").read().split(b"\0")
+            with open(c, "rb") as f:
+                parts = f.read().split(b"\0")
         except OSError:
             continue
-        joined = b" ".join(parts)
-        if b"mozaproxy.py" in joined and b"mozactl" not in joined:
+        if parts[-1] == b"":   # each entry ends in NUL; keep empty ones ("-W ''")
+            del parts[-1]
+        if _is_daemon_cmdline(parts):
             try:
-                pids.append(int(c.split("/")[2]))
-            except (IndexError, ValueError):
+                pids.append(int(os.path.basename(os.path.dirname(c))))
+            except ValueError:
                 pass
     return pids
 

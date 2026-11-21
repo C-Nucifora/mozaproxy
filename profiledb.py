@@ -72,14 +72,15 @@ class Profile:
     ffb_autocenter: int | None = None   # 0..100 seeded on attach; None = leave alone
     ffb_drop: list[str] = field(default_factory=list)  # canonical FF_* names, sorted
     # Virtual-device identity. identity_real clones the real base's name/ids at
-    # attach (games with wheel whitelists, e.g. FH5, match on identity); the
-    # explicit fields present a fixed identity instead. Mutually exclusive.
+    # attach (games bound to the base itself, e.g. AC's saved binding); the
+    # explicit fields present a fixed identity instead (fh5 wears a MOZA R9:
+    # the base's own 346e:0000 crashes FH5). Mutually exclusive.
     identity_real: bool = False
     identity_name: str | None = None
     identity_vendor: int | None = None    # 0..0xFFFF (0 is real: MOZA base is 346e:0000)
     identity_product: int | None = None
     # Mode C target range for all non-hat axes; None = mode default (signed16).
-    # [0, 32767] dodges HID sign-handling bugs (UE RawInput under Proton).
+    # Only direct evdev readers see it; Proton games get SDL's rescaled range.
     axis_range: tuple[int, int] | None = None
     axes: dict[str, AxisOverride] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)

@@ -3,9 +3,10 @@
 mozaproxy - present a MOZA wheelbase to games as a clean virtual wheel.
 
 Some titles (notably Forza Horizon 5 under Proton) crash on startup when a MOZA
-base is connected. The base advertises a HID profile with 128 buttons plus a
-large PID force-feedback block, and the game's DirectInput / Windows.Gaming.Input
-enumeration falls over on it. See README for the full diagnosis.
+base is connected. FH5 keys its wheel handling off the USB identity: the base's
+own 346e:0000 crashes it whatever the button count, while the same slim face
+presenting as a MOZA R9 (profiles/fh5.toml) launches. See README for the full
+diagnosis.
 
 This daemon:
   1. Opens and exclusively grabs the real MOZA evdev device.
@@ -14,6 +15,7 @@ This daemon:
      effects.
   3. Relays input events real -> virtual, and force-feedback (effect upload,
      erase, play/stop, gain, autocenter) virtual -> real.
+  4. Wears a per-profile identity (name/vendor/product) on the virtual device.
 
 Games are steered away from the real node by the accompanying udev rule
 (99-mozaproxy.rules), which clears ID_INPUT_JOYSTICK on the real device so input
@@ -62,8 +64,9 @@ def usb_backed(phys: str | None) -> bool:
     """True if an evdev node sits on real USB hardware (not uinput).
 
     Identity cloning (--identity-real: the virtual device wears the real
-    base's exact name/ids so games like FH5 match their wheel profile) makes
-    name/id checks useless for telling real from virtual. The transport is the
+    base's exact name/ids so a game bound to the base, e.g. Assetto Corsa's
+    saved binding, still matches) makes name/id checks useless for telling
+    real from virtual. The transport is the
     reliable discriminator: the real base's phys is "usb-...", while our
     python-evdev uinput devices report "py-evdev-uinput".
     """
@@ -193,12 +196,12 @@ class Proxy:
         spec = self.mode.build_spec(real)
         self._report_button_codes(spec)
         if getattr(self.args, "identity_real", False):
-            # Wear the real base's exact identity. Games with wheel whitelists
-            # (FH5) match on USB name/ids; presenting the true identity with a
-            # slimmed profile is exactly what MOZA's Windows "Forza
-            # compatibility mode" firmware does. Safe: the udev hide-rule
-            # matches USB parent ATTRS, which a uinput device does not have,
-            # and everything that must tell real from virtual uses usb_backed().
+            # Wear the real base's exact identity, for games bound to the base
+            # by USB name/ids (Assetto Corsa's saved binding, profiles/ac.toml).
+            # Not for FH5: the base's own 346e:0000 crashes it even on a slim
+            # face (profiles/fh5.toml). Safe: the udev hide-rule matches USB
+            # parent ATTRS, which a uinput device does not have, and everything
+            # that must tell real from virtual uses usb_backed().
             spec.name = self.real.name
             spec.vendor = self.real.info.vendor
             spec.product = self.real.info.product
@@ -562,15 +565,16 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser(description="MOZA -> clean virtual wheel proxy with FFB relay")
     p.add_argument("--mode", default="A",
                    help="presentation mode: A/wheel (passthrough), C/normalized "
-                        "(consistent signed axes; fixes binary-axis games), "
+                        "(one signed range for every axis), "
                         "B/gamepad (Xbox 360 / XInput). Default A.")
     p.add_argument("--deadzone", type=float, default=0.0,
                    help="deadzone fraction 0..1 applied to steering in modes B "
                         "and C (default 0)")
     p.add_argument("--axis-range", type=_axis_range, default=None,
                    help="mode C: present all non-hat axes on this LO:HI range "
-                        "(default -32768:32767; use 0:32767 for HID stacks that "
-                        "misread signed or 16-bit-unsigned axes)")
+                        "(default -32768:32767). Reaches software that reads the "
+                        "evdev values directly; Proton games get SDL's rescaled "
+                        "range whatever is set here")
     p.add_argument("--ffb-gain", type=_gain_percent, default=100,
                    help="force-feedback strength percent 0..200: below 100 "
                         "clamps the game's gain, above 100 boosts effect drive "
@@ -609,8 +613,9 @@ def parse_args(argv=None):
                         "exposed while the total button count stays small")
     p.add_argument("--identity-real", action="store_true",
                    help="clone the real base's name/vendor/product onto the "
-                        "virtual device (games with wheel whitelists, e.g. FH5, "
-                        "match on identity; overrides --name/--vendor/--product)")
+                        "virtual device (for games bound to the base itself, "
+                        "e.g. Assetto Corsa's saved binding; not FH5, which "
+                        "crashes on 346e:0000; overrides --name/--vendor/--product)")
     p.add_argument("--name", default=None, help="override virtual device name")
     p.add_argument("--vendor", type=lambda x: int(x, 0), default=None,
                    help="override virtual device USB vendor id")

@@ -1,6 +1,11 @@
-# Fallback for wheel-aware games that still misread axis ranges (the signed/
-# unsigned steering asymmetry): mode C rescales every axis to a consistent
-# signed range.
+# Mode C: every non-hat axis on one signed range, plus an optional steering
+# deadzone. For software that reads the evdev values directly and mishandles
+# the base's unsigned steering (0..65535) next to its signed pedals.
+#
+# Under Proton it can't change how a game decodes the axes: SDL rescales every
+# axis onto -32768..32767 before the game sees it (only the steering deadzone
+# still reaches the game). So it is not a fix for Proton games that read axes
+# as binary (see docs/PROTON-AXES.md).
 name = "normalized"
 mode = "C"
-notes = "Fallback for wheel-aware games that misread axis ranges; set axes.steering.deadzone if the game jitters at center."
+notes = "Mode C for software that reads evdev values directly; it can't fix Proton games that read axes as binary. Set axes.steering.deadzone if steering jitters at center."

@@ -2,9 +2,9 @@
 #
 # The mozaproxy daemon opens the real base directly by path (and grabs it), then
 # re-exposes a clean virtual wheel that games use instead. To stop games (SDL /
-# Wine winebus under Proton) from *also* enumerating the real 128-button node and
-# crashing on it, we clear its ID_INPUT_JOYSTICK tag. The daemon does not rely on
-# udev tags, so it still opens the device fine.
+# Wine winebus under Proton) from *also* enumerating the real node (its own
+# 346e:0000 identity is what crashes FH5), we clear its ID_INPUT_JOYSTICK tag.
+# The daemon does not rely on udev tags, so it still opens the device fine.
 #
 # Access: MODE/GROUP plus the uaccess tag keep the node readable/writable by the
 # logged-in user (and thus the daemon). uaccess was already applied by earlier

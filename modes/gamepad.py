@@ -2,10 +2,15 @@
 modes.gamepad - present the MOZA base as an Xbox 360 / XInput gamepad.
 
 WHY this mode exists:
-  Some games refuse to bind a wheel at all, only accepting a controller, and
-  some misread a wheel's high-resolution axes as binary 0%/100% inputs. Wearing
-  an Xbox-360 face gives those games proper analog steering, throttle and brake
-  on the axes an XInput pad is expected to expose.
+  Some games refuse to bind a wheel at all, only accepting a controller. Under
+  Proton, some also read a wheel's axes as binary 0%/100% inputs, because
+  Proton presents them as signed 32-bit HID fields (docs/PROTON-AXES.md).
+  Wearing an Xbox-360 face should let those games read analog steering,
+  throttle and brake through XInput (not yet tried in such a game), on the
+  axes an XInput pad is expected to expose. The cost: only the first 11 wheel
+  buttons (a pad's face/shoulder/system buttons), and rumble instead of real
+  force feedback; a full-strength rumble still drives the base at full force
+  (see translate_effect).
 
 WHY the Microsoft vendor/product ids:
   SDL, Steam Input and most engines recognise a controller as "XInput" by its
@@ -23,8 +28,9 @@ WHY rumble is translated:
 WHY the pedal source axes are configurable:
   Without hardware attached we cannot be certain which real ABS code carries the
   throttle vs. brake vs. clutch on a given base. The source axes are therefore
-  constructor arguments with sensible defaults and are meant to be calibrated
-  (Phase 3 will add `mozactl calibrate` to persist per-user assignments).
+  constructor arguments with sensible defaults, meant to be calibrated:
+  `mozactl calibrate` records the per-user assignment, which mode B profiles
+  pick up automatically.
 """
 from __future__ import annotations
 
@@ -229,12 +235,13 @@ class GamepadMode(Mode):
             rumble = effect.u.ff_rumble_effect
             strong = int(rumble.strong_magnitude)
             weak = int(rumble.weak_magnitude)
-            # Halve so a full 0xffff rumble maps to ~half-scale periodic drive.
+            # Rumble magnitudes are u16, periodic magnitude is s16: halving maps
+            # a full 0xffff rumble to 0x7fff, i.e. FULL-scale periodic drive.
             mag = int(min(0x7FFF, self.rumble_gain * max(strong, weak) // 2))
 
             periodic = ff.Periodic(
                 waveform=ecodes.FF_SINE,
-                period=100,          # ms; a gentle ~10 Hz buzz
+                period=100,          # ms; a 10 Hz sine
                 magnitude=mag,
                 offset=0,
                 phase=0,

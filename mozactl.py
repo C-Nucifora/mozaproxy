@@ -793,7 +793,8 @@ def cmd_modes(_args) -> int:
     print(_c("1", "presentation modes") + "  (mozactl start --mode <sel>)")
     for sel, desc in list_modes():
         print(f"  {_c('36', sel):>6}  {desc}")
-    print("\n  Triage a broken game: try A, then C, then B.")
+    print("\n  Triage a broken game: start with A. If a Proton game reads axes as binary,"
+          "\n  C won't help (docs/PROTON-AXES.md); try B if it accepts a controller.")
     return 0
 
 
@@ -984,7 +985,7 @@ def cmd_new(args) -> int:
             profile = profiledb.Profile(
                 name=args.name,
                 mode=profiledb.canon_mode(args.mode or "A"),
-                notes="created by mozactl new; triage a broken game: A, then C, then B",
+                notes="created by mozactl new",
             )
         path = profiledb.save_profile(profile, force=args.force)
     except profiledb.ProfileError as e:
@@ -1342,7 +1343,7 @@ def cmd_calibrate(_args) -> int:
         return 1
     path = profiledb.save_calibration(mapping)
     print(_c("32", "Saved: ") + path)
-    print("Gamepad/normalized profiles now pick these axes up automatically.")
+    print("Gamepad (mode B) profiles now pick these axes up automatically.")
     return 0
 
 
@@ -1355,10 +1356,10 @@ def main(argv=None) -> int:
     d.set_defaults(fn=cmd_doctor)
     s = sub.add_parser("start", help="start the daemon in a chosen mode")
     s.add_argument("--mode", default="A",
-                   help="A/wheel (default), C/normalized (binary-axis fix), "
+                   help="A/wheel (default), C/normalized (one signed axis range), "
                         "B/gamepad (XInput). See 'mozactl modes'.")
     s.add_argument("--deadzone", type=float, default=0.0,
-                   help="steering deadzone 0..1 (mode C)")
+                   help="steering deadzone 0..1 (modes B and C)")
     s.add_argument("daemon_args", nargs=argparse.REMAINDER, metavar="-- DAEMON_ARGS",
                    help="extra args for mozaproxy.py, after a '--' "
                         "(e.g. -- --button-codes 0x120,0x2c0)")

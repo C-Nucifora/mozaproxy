@@ -560,7 +560,7 @@ class TestUsbBacked:
 
 
 class TestNormalizedAxisRange:
-    """Mode C axis_range override (sign-safe ranges for picky HID stacks)."""
+    """Mode C axis_range override (one uniform range for direct evdev readers)."""
 
     def test_default_stays_signed16(self, real_caps):
         mode = NormalizedMode()

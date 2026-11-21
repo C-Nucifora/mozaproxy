@@ -51,10 +51,12 @@ games ONLY while the daemon runs. Manual, per-session workflow:
   2. Power the wheelbase on, then check setup:  mozactl doctor
   3. Start the clean virtual wheel:             mozactl start
   4. Confirm it is up:                          mozactl status
-  5. Launch Forza with the wheel. Clean launch options are enough:
-        PROTON_DLSS_UPGRADE=1 ENABLE_HDR_WSI=1 PROTON_ENABLE_WAYLAND=1 PROTON_ENABLE_HDR=1 %command%
-     Bind in-game to the "MOZA R25 (mozaproxy)" device.
+  5. Launch each game through its profile (Steam launch options), e.g. Forza:
+        mozactl run fh5 -- %command%
+     In FH5, bind the "MOZA R9 Base" device. FH5 rejects the default
+     "MOZA R25 (mozaproxy)" face that a bare 'mozactl start' presents.
   6. When done:                                 mozactl stop
 
-FFB smoke test:  ./.venv/bin/python tools/ffbtest.py   (wheel should pull)
+FFB smoke test (~50% constant force for 1.5 s; keep clear of the rim):
+  ./.venv/bin/python tools/ffbtest.py
 EOF

@@ -1007,12 +1007,13 @@ class TestAxisRangeSchema:
         p = write(user, "g", emit_profile_toml(prof))
         assert load_profile(p).axis_range == (0, 32767)
 
-    def test_jdm_seed_uses_sign_safe_range(self):
+    def test_jdm_seed_keeps_the_july_settings(self):
+        # The seed keeps what was tried in July (docs/PROTON-AXES.md): mode C
+        # with [0, 32767], which SDL rescales away under Proton, and 346e:0fff,
+        # a MOZA id on neither JDM's preset list nor SDL's wheel list.
         p = load_profile("jdm")
         assert p.mode == "C"
         assert p.axis_range == (0, 32767)
-        # Unrecognised MOZA id so JDM applies no per-device preset (its R9
-        # preset re-mangles our synthesized report); custom-bind in-game.
         assert p.identity_product == 0x0FFF
         args = daemon_args(p, {})
         assert "--axis-range" in args and "0:32767" in args

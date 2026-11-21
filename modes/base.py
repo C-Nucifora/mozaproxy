@@ -178,8 +178,8 @@ def canon_ff_type(name: str) -> str:
 def strip_ff(events: dict, drop: frozenset[int] | set[int]) -> dict:
     """Remove dropped effect-type codes from a VirtualSpec events dict.
 
-    WHY: some game backends fault on specific PID effect types (the same class
-    of bug as the 128-button crash). Not advertising a type means the kernel
+    WHY: some game backends fault on specific PID effect types. Not
+    advertising a type means the kernel
     rejects the game's upload before it ever reaches the relay, so the filter
     must happen at advertisement time, not just upload time. Removing the last
     type removes EV_FF entirely (a device advertising EV_FF with no effects

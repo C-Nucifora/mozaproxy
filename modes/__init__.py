@@ -4,9 +4,12 @@ modes - presentation modes ("faces") the daemon can wear.
 A mode decides what the virtual device looks like and how real events map onto
 it. Pick one with `--mode` (mozaproxy.py) or `mozactl start --mode ...`:
 
-  A / wheel        direct passthrough wheel (default; fixes FH5 enumeration crash)
-  C / normalized   consistent signed axes (fixes games that read axes as binary)
-  B / gamepad      Xbox 360 / XInput pad (controller-only + arcade titles)
+  A / wheel        direct passthrough wheel (default; FH5 with the fh5 profile)
+  C / normalized   every axis on one signed range, for software that reads the
+                   evdev values directly (no effect on Proton games: SDL
+                   rescales every axis; see docs/PROTON-AXES.md)
+  B / gamepad      Xbox 360 / XInput pad (controller-only titles, and Proton
+                   games that read a wheel's axes as binary but take a pad)
 
 `get_mode(key, ...)` resolves a selector to a constructed Mode. Overrides that
 are left None fall back to the mode's own defaults. The calibration parameters
@@ -23,11 +26,11 @@ from .wheel import NormalizedMode, WheelMode
 # Ordered for help/listing: (selector aliases, class, one-line help).
 MODES: list[tuple[tuple[str, ...], type[Mode], str]] = [
     (("a", "wheel"), WheelMode,
-     "Wheel — direct passthrough (fixes FH5 crash)"),
+     "Wheel — direct passthrough (default; FH5 via the fh5 profile)"),
     (("c", "normalized", "norm"), NormalizedMode,
-     "Normalized wheel — consistent signed axes (fixes binary-axis games)"),
+     "Normalized wheel — one signed range for direct evdev readers"),
     (("b", "gamepad", "xinput", "pad"), GamepadMode,
-     "Gamepad — Xbox 360 / XInput (controller-only & arcade titles)"),
+     "Gamepad — Xbox 360 / XInput (controller-only titles)"),
 ]
 
 
@@ -72,8 +75,8 @@ def get_mode(key: str, *, buttons: int | None = None, name: str | None = None,
     if k in ("c", "normalized", "norm"):
         co: dict = _wheel_overrides(buttons, name, vendor, product, button_codes)
         if axis_range is not None:
-            # Uniform target range for all non-hat axes; (0, 32767) dodges
-            # sign-handling bugs in picky HID stacks (see NormalizedMode).
+            # Uniform target range for all non-hat axes (see NormalizedMode).
+            # Only direct evdev readers see it; Proton games get SDL's rescale.
             co["axis_range"] = axis_range
         return NormalizedMode(steer_deadzone=steer_deadzone or 0.0, **co)
     if k in ("b", "gamepad", "xinput", "pad"):

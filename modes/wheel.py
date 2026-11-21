@@ -1,10 +1,11 @@
 """
 modes.wheel - the two "wheel" presentation modes.
 
-  WheelMode       ("A") - direct passthrough; replicates the original daemon.
-  NormalizedMode  ("C") - presents every non-hat axis on a consistent SIGNED16
-                          range so games that choke on the MOZA's unsigned
-                          steering axis behave.
+  WheelMode       ("A") - direct passthrough of the real axes and button codes.
+  NormalizedMode  ("C") - presents every non-hat axis on one uniform range
+                          (SIGNED16, or axis_range) for software that reads the
+                          evdev values directly; no effect on how Proton games
+                          decode the axes (docs/PROTON-AXES.md).
 
 Both are pure/hardware-free: they only describe the virtual device and translate
 events. All device I/O stays in mozaproxy.py.
@@ -24,11 +25,12 @@ _HAT_AXES = (ecodes.ABS_HAT0X, ecodes.ABS_HAT0Y)
 
 
 class WheelMode(Mode):
-    """Mode "A": mirror the real base verbatim (the original daemon's behavior).
+    """Mode "A": mirror the real base's axes and FF verbatim.
 
-    Every real ABS axis is exposed with its exact AbsInfo, a small game-friendly
-    block of buttons is presented contiguously from BTN_JOYSTICK, and the real
-    FF effects are advertised so the FFB relay works unchanged.
+    Every real ABS axis is exposed with its exact AbsInfo, the real device's
+    own button codes are passed through (the lowest `buttons` of them, or
+    exactly `button_codes`; see _button_codes), and the real FF effects are
+    advertised so the FFB relay works unchanged.
     """
 
     key: str = "A"
@@ -143,11 +145,18 @@ class NormalizedMode(WheelMode):
     """Mode "C": present every non-hat axis on a consistent signed range.
 
     The real MOZA base reports steering (ABS_X) as UNSIGNED 0..65535 while the
-    pedals and other axes are SIGNED -32768..32767. Some games/enumerators
-    assume a single axis convention and misread the base as a result (e.g. a
-    steering axis stuck at one extreme, or a phantom center offset). This mode
-    rescales every non-hat axis onto SIGNED16 so all axes share one convention.
-    Hat axes keep their discrete -1..1 range.
+    pedals and other axes are SIGNED -32768..32767. Software that reads the
+    evdev values directly may assume a single convention and misread the base
+    (e.g. a steering axis stuck at one extreme, or a phantom center offset).
+    This mode rescales every non-hat axis onto SIGNED16 so all axes share one
+    convention. Hat axes keep their discrete -1..1 range.
+
+    It does NOT change what a Proton game receives: Proton reads the virtual
+    wheel through SDL, which rescales every axis onto -32768..32767 whatever
+    range is advertised here, and presents it as a signed 32-bit HID field. A
+    game that misreads those fields (JDM) reads binary in modes A and C alike;
+    mode B may reach it through XInput instead (not yet tried in JDM). See
+    docs/PROTON-AXES.md.
     """
 
     key: str = "C"
@@ -163,12 +172,13 @@ class NormalizedMode(WheelMode):
         super().__init__(buttons=buttons, name=name, vendor=vendor,
                          product=product, button_codes=button_codes)
         self.steer_deadzone = steer_deadzone
-        # The uniform target range every non-hat axis is presented on. The
-        # SIGNED16 default suits most backends, but ranges with a negative
-        # minimum trip sign-handling bugs in some HID stacks (UE RawInput under
-        # Proton reads them as pegged min-or-max). axis_range=(0, 32767) is the
-        # bulletproof alternative: the top bit is never set, so signed and
-        # unsigned parsers read identical values.
+        # The uniform target range every non-hat axis is presented on.
+        # axis_range=(0, 32767) keeps the top bit clear, so a direct evdev
+        # reader that confuses signed and unsigned values reads the same
+        # numbers either way. It does not help Proton games: SDL rescales any
+        # range onto -32768..32767. JDM tried it in July and stayed binary,
+        # except when SDL mapped the wheel as a gamepad; see
+        # docs/PROTON-AXES.md.
         self.axis_range = axis_range
         # ABS code -> (src_min, src_max) captured from the real device, so
         # map_input can rescale each incoming value onto axis_range.

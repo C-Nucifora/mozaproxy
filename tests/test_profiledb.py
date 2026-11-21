@@ -846,6 +846,129 @@ class TestFfbGainBoost:
         assert args.ffb_gain == 150
 
 
+class TestButtonCodesSchema:
+    def test_parsed_deduped_sorted(self, dirs):
+        user, _ = dirs
+        p = write(user, "g", 'mode = "A"\nbutton_codes = [0x2c0, 0x120, 0x120]\n')
+        prof = load_profile(p)
+        assert prof.button_codes == [0x120, 0x2C0]
+
+    @pytest.mark.parametrize("bad", ["[0xff]", "[0x300]", "[288.0]",
+                                     "[true]", "[]", '"0x120"'])
+    def test_validated(self, dirs, bad):
+        user, _ = dirs
+        p = write(user, "g", f'mode = "A"\nbutton_codes = {bad}\n')
+        with pytest.raises(ProfileError, match="button_codes"):
+            load_profile(p)
+
+    def test_daemon_args_renders_hex_list(self):
+        prof = Profile(name="g", mode="C", button_codes=[0x120, 0x2C0])
+        assert daemon_args(prof, {}) == [
+            "--mode", "C", "--button-codes", "0x120,0x2c0"]
+
+    def test_daemon_args_renders_both_when_both_are_set(self):
+        # The list wins in the mode; the count is its fallback when none of
+        # the listed codes exist, so the daemon must receive the profile's own
+        # count rather than silently use the mode default of 24.
+        prof = Profile(name="g", mode="A", buttons=8, button_codes=[0x120])
+        assert daemon_args(prof, {}) == [
+            "--mode", "A", "--buttons", "8", "--button-codes", "0x120"]
+
+    def test_daemon_args_canonical_position(self):
+        # The argv order is compared verbatim against the running daemon's
+        # state file; --button-codes follows --buttons, ahead of the
+        # identity, FFB, deadzone and axis-range flags.
+        prof = Profile(name="g", mode="C", buttons=24, button_codes=[0x120, 0x2C0],
+                       identity_real=True, ffb_gain=70, ffb_autocenter=10,
+                       ffb_drop=["FF_SPRING"], axis_range=(0, 32767),
+                       axes={"steering": AxisOverride(deadzone=0.05)})
+        assert daemon_args(prof, {}) == [
+            "--mode", "C", "--buttons", "24", "--button-codes", "0x120,0x2c0",
+            "--identity-real",
+            "--ffb-gain", "70", "--ffb-autocenter", "10", "--ffb-drop", "FF_SPRING",
+            "--deadzone", "0.05", "--axis-range", "0:32767"]
+
+    @pytest.mark.parametrize("code", [0x100, 0x101, 0x2DF, 0x2E0, 0x2FE, 0x2FF])
+    def test_range_ends_accepted_by_profile_and_daemon(self, dirs, code):
+        # The profile schema and the daemon's converter each hold a copy of the
+        # 0x100..0x2ff range. If they drift, a profile that loads would spawn a
+        # daemon that dies in argparse — and the game starts with no wheel.
+        import mozaproxy
+        user, _ = dirs
+        prof = load_profile(write(user, "g",
+                                  f'mode = "A"\nbutton_codes = [{code:#x}]\n'))
+        assert prof.button_codes == [code]
+        assert mozaproxy.parse_args(daemon_args(prof, {})).button_codes == [code]
+
+    def test_file_with_both_keys_loads_and_codes_win(self, dirs):
+        user, _ = dirs
+        prof = load_profile(write(
+            user, "g", 'mode = "A"\nbuttons = 24\nbutton_codes = [0x2c0, 0x120]\n'))
+        assert (prof.buttons, prof.button_codes) == (24, [0x120, 0x2C0])
+        assert daemon_args(prof, {}) == [
+            "--mode", "A", "--buttons", "24", "--button-codes", "0x120,0x2c0"]
+
+    def test_profile_count_is_the_fallback_end_to_end(self, dirs):
+        # Profile -> daemon argv -> mode: a list that matches nothing on this
+        # base falls back to the PROFILE's count, not the mode default.
+        import mozaproxy
+        from conftest import make_real_caps
+        from evdev import ecodes
+        user, _ = dirs
+        prof = load_profile(write(
+            user, "g", 'mode = "C"\nbuttons = 8\nbutton_codes = [0x130, 0x131]\n'))
+        args = mozaproxy.parse_args(daemon_args(prof, {}))
+        mode = mozaproxy.get_mode(args.mode, buttons=args.buttons,
+                                  button_codes=args.button_codes)
+        spec = mode.build_spec(make_real_caps())
+        assert mode.button_codes_ignored is True
+        assert len(spec.events[ecodes.EV_KEY]) == 8
+
+    def test_emit_round_trip_with_count_and_tables(self, dirs):
+        # button_codes must be emitted above the table sections: a top-level
+        # key written after "[hooks]" would be read back as hooks.button_codes.
+        user, _ = dirs
+        prof = Profile(name="g", mode="C", buttons=24, button_codes=[0x120, 0x2C0],
+                       identity_name="X", identity_vendor=0x346E,
+                       identity_product=0xFFF,
+                       axes={"steering": AxisOverride(deadzone=0.05)},
+                       env={"A": "1"}, hook_pre="echo hi")
+        back = load_profile(write(user, "g", emit_profile_toml(prof)))
+        assert (back.buttons, back.button_codes) == (24, [0x120, 0x2C0])
+        assert daemon_args(back, {}) == daemon_args(prof, {})
+
+    def test_save_profile_round_trip(self, dirs):
+        # The `mozactl new NAME --from PROFILE` path.
+        profiledb.save_profile(Profile(name="g", mode="A", buttons=24,
+                                       button_codes=[0x120, 0x2C0]))
+        back = load_profile("g")
+        assert (back.buttons, back.button_codes) == (24, [0x120, 0x2C0])
+
+    def test_daemon_args_ignored_in_mode_b(self):
+        prof = Profile(name="g", mode="B", button_codes=[0x120, 0x2C0])
+        assert daemon_args(prof, {}) == ["--mode", "B"]
+
+    def test_round_trips_through_daemon_argparse(self):
+        import mozaproxy
+        prof = Profile(name="g", mode="A", button_codes=[0x120, 0x2C0])
+        args = mozaproxy.parse_args(daemon_args(prof, {}))
+        assert args.button_codes == [0x120, 0x2C0]
+
+    def test_emit_round_trip(self, dirs):
+        user, _ = dirs
+        prof = Profile(name="g", mode="C", button_codes=[0x120, 0x271, 0x2C0])
+        p = write(user, "g", emit_profile_toml(prof))
+        assert load_profile(p).button_codes == [0x120, 0x271, 0x2C0]
+
+    def test_emit_uses_hex(self):
+        text = emit_profile_toml(Profile(name="g", mode="A",
+                                         button_codes=[0x120, 0x2C0]))
+        assert "button_codes = [0x120, 0x2c0]" in text
+
+    def test_default_not_emitted(self):
+        assert "button_codes" not in emit_profile_toml(Profile(name="g", mode="A"))
+
+
 class TestAxisRangeSchema:
     def test_axis_range_parsed_and_rendered(self, dirs):
         user, _ = dirs

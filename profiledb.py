@@ -63,6 +63,11 @@ class Profile:
     name: str
     mode: str = "A"                # canonical letter A|B|C|D
     buttons: int | None = None     # 1..128
+    # Explicit real button codes to expose (wheel modes). When set it wins over
+    # `buttons`: exposes exactly these codes so paddles high in the code space
+    # stay visible while the count stays small. `buttons` then only applies if
+    # none of the listed codes exist on the device. Ints in 0x100..0x2ff, sorted.
+    button_codes: list[int] | None = None
     ffb_gain: int = 100            # 0..200; <100 clamps gain, >100 boosts effects
     ffb_autocenter: int | None = None   # 0..100 seeded on attach; None = leave alone
     ffb_drop: list[str] = field(default_factory=list)  # canonical FF_* names, sorted
@@ -112,9 +117,9 @@ def canon_mode(s: str) -> str:
 # would look like "the profile doesn't work", so unknown keys are errors that
 # name the file and the key.
 # ---------------------------------------------------------------------------
-_TOP_KEYS = frozenset({"name", "mode", "buttons", "ffb_gain", "ffb_autocenter",
-                       "ffb_drop", "identity", "axis_range", "notes", "axes",
-                       "proton", "hooks"})
+_TOP_KEYS = frozenset({"name", "mode", "buttons", "button_codes", "ffb_gain",
+                       "ffb_autocenter", "ffb_drop", "identity", "axis_range",
+                       "notes", "axes", "proton", "hooks"})
 _IDENTITY_KEYS = frozenset({"name", "vendor", "product"})
 _AXIS_NAMES = ("steering", "throttle", "brake", "clutch")
 _AXIS_KEYS = frozenset({"source", "invert", "deadzone", "range"})
@@ -202,6 +207,20 @@ def _parse_profile_file(path: str) -> Profile:
     buttons = data.get("buttons")
     if buttons is not None and (not _is_int(buttons) or not 1 <= buttons <= 128):
         raise ProfileError(f"{path}: 'buttons' must be an integer in 1..128")
+
+    button_codes: list[int] | None = None
+    if "button_codes" in data:
+        raw = data["button_codes"]
+        if not isinstance(raw, list) or not raw:
+            raise ProfileError(
+                f"{path}: 'button_codes' must be a non-empty list of integer codes")
+        for v in raw:
+            if not _is_int(v) or not 0x100 <= v <= 0x2FF:
+                raise ProfileError(
+                    f"{path}: 'button_codes' entries must be integers in "
+                    "0x100..0x2ff (BTN_MISC..KEY_MAX; TOML hex like 0x2c0 is fine)")
+        # Dedup + sort so equivalent profiles render identical daemon argv.
+        button_codes = sorted(set(raw))
 
     ffb_gain = data.get("ffb_gain", 100)
     if not _is_int(ffb_gain) or not 0 <= ffb_gain <= 200:
@@ -319,7 +338,8 @@ def _parse_profile_file(path: str) -> Profile:
     # The filename stem is the lookup key; the in-file `name` is cosmetic only,
     # so a copied file can never impersonate another profile.
     stem = os.path.splitext(os.path.basename(path))[0]
-    return Profile(name=stem, mode=mode, buttons=buttons, ffb_gain=ffb_gain,
+    return Profile(name=stem, mode=mode, buttons=buttons,
+                   button_codes=button_codes, ffb_gain=ffb_gain,
                    ffb_autocenter=ffb_autocenter, ffb_drop=ffb_drop,
                    identity_real=identity_real, identity_name=identity_name,
                    identity_vendor=identity_vendor, identity_product=identity_product,
@@ -435,8 +455,16 @@ def daemon_args(profile: Profile,
     merged = merge_axes(profile, calibration)
 
     argv = ["--mode", mode]
-    if mode in ("A", "C") and profile.buttons is not None:
-        argv += ["--buttons", str(profile.buttons)]
+    if mode in ("A", "C"):
+        # Both are rendered when both are set: the code list wins whenever any
+        # of its codes exist on the device, and the count is what the mode
+        # falls back to when none do (the daemon behaves the same when given
+        # both flags directly). --button-codes sits right after --buttons.
+        if profile.buttons is not None:
+            argv += ["--buttons", str(profile.buttons)]
+        if profile.button_codes is not None:
+            argv += ["--button-codes",
+                     ",".join(f"0x{c:x}" for c in profile.button_codes)]
     if profile.identity_real:
         argv += ["--identity-real"]
     else:
@@ -513,6 +541,11 @@ def emit_profile_toml(profile: Profile) -> str:
     ]
     if profile.buttons is not None:
         lines.append(f"buttons = {profile.buttons}")
+    if profile.button_codes is not None:
+        # Hex is far more readable for HID button codes than decimal; tomllib
+        # parses 0x-literals, so this round-trips back to the same ints.
+        codes = ", ".join(f"0x{c:x}" for c in profile.button_codes)
+        lines.append(f"button_codes = [{codes}]")
     if profile.ffb_gain != 100:
         lines.append(f"ffb_gain = {profile.ffb_gain}")
     if profile.ffb_autocenter is not None:

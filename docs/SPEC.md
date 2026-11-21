@@ -176,6 +176,7 @@ mozactl calibrate              # interactive axis map/deadzone helper → writes
 name = "fh5"
 mode = "A"                     # A|B|C|D
 buttons = 24
+# button_codes = [0x120, 0x2c0]  # expose exactly these real codes; wins over `buttons`
 ffb_gain = 100                 # 0-100, clamps relayed gain
 [axes]                         # optional per-axis overrides (mode C/B)
 steering = { source = "ABS_X", range = [-32768, 32767], deadzone = 0 }

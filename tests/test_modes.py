@@ -15,6 +15,8 @@ from modes.gamepad import GamepadMode
 from modes.wheel import NormalizedMode, WheelMode
 from mozaproxy import Proxy
 
+from conftest import make_real_caps
+
 
 # ---------------------------------------------------------------------------
 # WheelMode / Mode A
@@ -608,3 +610,253 @@ class TestNormalizedAxisRange:
                 _axis_range(bad)
         assert parse_args(["--axis-range", "0:32767"]).axis_range == (0, 32767)
         assert parse_args([]).axis_range is None
+
+
+class TestExplicitButtonCodes:
+    """Wheel modes: expose an explicit set of real button codes.
+
+    Decouples WHICH buttons appear from HOW MANY, so buttons high in the
+    0x270+ block can stay exposed while the total count stays small. That
+    turns "does this game mind a large button set?" into a one-variable
+    experiment instead of an all-or-nothing choice.
+    """
+
+    def test_wheel_exposes_only_listed_codes(self, real_caps):
+        # Low block + two specific upper-block paddle codes: 18 buttons total,
+        # yet including codes a plain count of 18 would never reach.
+        codes = list(range(0x120, 0x130)) + [0x2C0, 0x2C1]
+        mode = WheelMode(button_codes=codes)
+        spec = mode.build_spec(real_caps)
+        assert spec.events[ecodes.EV_KEY] == sorted(codes)
+
+    def test_explicit_codes_win_over_count(self, real_caps):
+        mode = WheelMode(buttons=128, button_codes=[0x120, 0x2C0])
+        spec = mode.build_spec(real_caps)
+        assert spec.events[ecodes.EV_KEY] == [0x120, 0x2C0]
+
+    def test_unknown_codes_dropped_not_invented(self, real_caps):
+        # 0x131 is in the gamepad block the base skips; 0x400 is out of range.
+        # Neither is on the real device, so both are dropped rather than faked
+        # — and remembered, so the daemon can say so instead of staying silent.
+        mode = WheelMode(button_codes=[0x120, 0x131, 0x2C0, 0x400])
+        spec = mode.build_spec(real_caps)
+        assert spec.events[ecodes.EV_KEY] == [0x120, 0x2C0]
+        assert mode.unknown_button_codes == [0x131, 0x400]
+        assert mode.button_codes_ignored is False
+
+    def test_all_known_codes_report_nothing_unknown(self, real_caps):
+        mode = WheelMode(button_codes=[0x120, 0x2C0])
+        mode.build_spec(real_caps)
+        assert mode.unknown_button_codes == []
+        assert mode.button_codes_ignored is False
+
+    def test_no_listed_code_on_device_falls_back_to_count(self, real_caps):
+        # A list written for a different wheel (or all typos) must not produce
+        # a button-less virtual wheel: ignore it and use the count instead.
+        for cls in (WheelMode, NormalizedMode):
+            mode = cls(buttons=24, button_codes=[0x130, 0x131])
+            spec = mode.build_spec(real_caps)
+            assert spec.events[ecodes.EV_KEY] == sorted(real_caps.keys)[:24]
+            assert mode.button_codes_ignored is True
+            assert mode.unknown_button_codes == [0x130, 0x131]
+            # The fallback set is what map_input honours too.
+            assert list(mode.map_input(ecodes.EV_KEY, 0x120, 1)) == [
+                (ecodes.EV_KEY, 0x120, 1)]
+
+    def test_duplicate_codes_collapsed(self, real_caps):
+        # The CLI and profile layers dedupe, but a mode built directly must not
+        # advertise the same code twice.
+        mode = WheelMode(button_codes=[0x2C0, 0x120, 0x2C0, 0x120])
+        spec = mode.build_spec(real_caps)
+        assert spec.events[ecodes.EV_KEY] == [0x120, 0x2C0]
+
+    def test_resolution_state_resets_between_builds(self, real_caps):
+        # build_spec runs again on every re-attach; stale "unknown" state from
+        # a previous device must not leak into the next report.
+        mode = WheelMode(button_codes=[0x120, 0x131])
+        mode.build_spec(real_caps)
+        assert mode.unknown_button_codes == [0x131]
+        other = make_real_caps()
+        other.keys = other.keys + [0x131]
+        mode.build_spec(other)
+        assert mode.unknown_button_codes == []
+        assert mode.button_set == {0x120, 0x131}
+
+    def test_ignored_state_resets_after_a_fallback_build(self, real_caps, caplog):
+        # Attach to a device with none of the codes (fallback), then re-attach
+        # to the base: the second build honours the list, so neither the flag
+        # nor the daemon's log may still claim it was ignored.
+        import logging
+        mode = WheelMode(buttons=4, button_codes=[0x120, 0x131])
+        bare = make_real_caps()
+        bare.keys = [0x2C0, 0x2C1]
+        mode.build_spec(bare)
+        assert mode.button_codes_ignored is True
+        spec = mode.build_spec(real_caps)
+        assert mode.button_codes_ignored is False
+        assert spec.events[ecodes.EV_KEY] == [0x120]
+        proxy = Proxy(types.SimpleNamespace(_mode=mode, ffb_gain=100))
+        with caplog.at_level(logging.WARNING, logger="mozaproxy"):
+            proxy._report_button_codes(spec)
+        (msg,) = [r.getMessage() for r in caplog.records]
+        assert "does not report 0x131" in msg and "none of" not in msg
+
+    def test_codes_sorted_regardless_of_input_order(self, real_caps):
+        mode = WheelMode(button_codes=[0x2C0, 0x120, 0x271])
+        spec = mode.build_spec(real_caps)
+        assert spec.events[ecodes.EV_KEY] == [0x120, 0x271, 0x2C0]
+
+    def test_map_input_passes_listed_drops_unlisted(self, real_caps):
+        mode = WheelMode(button_codes=[0x120, 0x2C0])
+        mode.build_spec(real_caps)
+        assert list(mode.map_input(ecodes.EV_KEY, 0x2C0, 1)) == [
+            (ecodes.EV_KEY, 0x2C0, 1)]
+        # 0x271 is a real button but not in the exposed set -> dropped.
+        assert list(mode.map_input(ecodes.EV_KEY, 0x271, 1)) == []
+
+    def test_normalized_mode_honors_button_codes(self, real_caps):
+        mode = NormalizedMode(button_codes=[0x120, 0x2DF])
+        spec = mode.build_spec(real_caps)
+        assert spec.events[ecodes.EV_KEY] == [0x120, 0x2DF]
+        # Axes still rescaled: the button change must not touch axis handling.
+        assert list(mode.map_input(ecodes.EV_ABS, ecodes.ABS_X, 65535)) == [
+            (ecodes.EV_ABS, ecodes.ABS_X, 32767)]
+
+    def test_none_falls_back_to_count(self, real_caps):
+        mode = WheelMode(buttons=24, button_codes=None)
+        spec = mode.build_spec(real_caps)
+        assert len(spec.events[ecodes.EV_KEY]) == 24
+
+    def test_get_mode_wires_button_codes(self, real_caps):
+        for sel in ("A", "C"):
+            mode = get_mode(sel, button_codes=[0x120, 0x2C0])
+            assert mode.button_codes == [0x120, 0x2C0]
+            spec = mode.build_spec(real_caps)
+            assert spec.events[ecodes.EV_KEY] == [0x120, 0x2C0]
+        # Unset stays None (mode falls back to the count).
+        assert get_mode("A").button_codes is None
+
+
+class TestButtonCodesConverter:
+    def test_parses_hex_and_decimal_sorted_deduped(self):
+        from mozaproxy import _button_codes
+        assert _button_codes("0x120, 0x2c0, 288, 0x120") == [0x120, 0x2C0]
+
+    def test_rejects_non_integer(self):
+        import argparse
+        import pytest
+        from mozaproxy import _button_codes
+        with pytest.raises(argparse.ArgumentTypeError):
+            _button_codes("0x120,paddle")
+
+    def test_rejects_out_of_range(self):
+        import argparse
+        import pytest
+        from mozaproxy import _button_codes
+        for bad in ("0xff", "0x300", "-1"):
+            with pytest.raises(argparse.ArgumentTypeError):
+                _button_codes(bad)
+
+    def test_rejects_empty_list(self):
+        # "" used to parse to [] — i.e. "expose zero buttons". The profile
+        # schema already rejects an empty button_codes list; match it.
+        import argparse
+        import pytest
+        from mozaproxy import _button_codes
+        for bad in ("", " ", ",", " , ,"):
+            with pytest.raises(argparse.ArgumentTypeError):
+                _button_codes(bad)
+
+    def test_empty_list_is_a_usage_error_via_parse_args(self, capsys):
+        import pytest
+        from mozaproxy import parse_args
+        with pytest.raises(SystemExit) as exc:
+            parse_args(["--button-codes", ""])
+        assert exc.value.code == 2
+        assert "at least one button code" in capsys.readouterr().err
+
+    def test_via_parse_args(self):
+        from mozaproxy import parse_args
+        args = parse_args(["--button-codes", "0x120,0x2c0"])
+        assert args.button_codes == [0x120, 0x2C0]
+        assert parse_args([]).button_codes is None
+
+
+class TestDaemonWiring:
+    """The daemon's own path: argv -> main() -> mode -> virtual device."""
+
+    def test_main_hands_button_codes_to_the_mode(self, monkeypatch):
+        import mozaproxy
+        seen = {}
+        monkeypatch.setattr(mozaproxy, "supervise",
+                            lambda args: seen.setdefault("args", args) and 0)
+        assert mozaproxy.main(["--mode", "C", "--button-codes", "0x2c0,0x120"]) == 0
+        mode = seen["args"]._mode
+        assert isinstance(mode, NormalizedMode)
+        assert mode.button_codes == [0x120, 0x2C0]
+
+    def test_build_virtual_creates_the_listed_buttons_and_logs_the_rest(
+            self, real_caps, monkeypatch, caplog):
+        import logging
+        import mozaproxy
+        created = {}
+
+        class FakeUInput:
+            def __init__(self, events, **kw):
+                created["keys"] = list(events[ecodes.EV_KEY])
+                created.update(kw)
+
+        class FakeReal:
+            name = "Gudsen MOZA R25 Ultra Base"
+            info = types.SimpleNamespace(vendor=0x346E, product=0, version=0x111)
+            ff_effects_count = 10
+
+            def capabilities(self, absinfo=False):
+                return {ecodes.EV_ABS: list(real_caps.abs.items()),
+                        ecodes.EV_KEY: list(real_caps.keys),
+                        ecodes.EV_FF: list(real_caps.ff)}
+
+        monkeypatch.setattr(mozaproxy, "UInput", FakeUInput)
+        args = mozaproxy.parse_args(["--mode", "A", "--button-codes", "0x120,0x131,0x2c0"])
+        args._mode = get_mode(args.mode, button_codes=args.button_codes)
+        proxy = Proxy(args)
+        proxy.real = FakeReal()
+        with caplog.at_level(logging.WARNING, logger="mozaproxy"):
+            proxy.build_virtual()
+        assert created["keys"] == [0x120, 0x2C0]
+        assert any("does not report 0x131" in r.getMessage() for r in caplog.records)
+
+
+class TestProxyReportsButtonCodes:
+    """The daemon says what an explicit code list resolved to (mozactl logs)."""
+
+    def _report(self, mode, real_caps, caplog):
+        import logging
+        proxy = Proxy(types.SimpleNamespace(_mode=mode, ffb_gain=100))
+        spec = mode.build_spec(real_caps)
+        with caplog.at_level(logging.WARNING, logger="mozaproxy"):
+            proxy._report_button_codes(spec)
+        return [r.getMessage() for r in caplog.records]
+
+    def test_silent_when_every_code_exists(self, real_caps, caplog):
+        mode = WheelMode(button_codes=[0x120, 0x2C0])
+        assert self._report(mode, real_caps, caplog) == []
+
+    def test_silent_without_an_explicit_list(self, real_caps, caplog):
+        assert self._report(WheelMode(buttons=24), real_caps, caplog) == []
+
+    def test_warns_naming_the_dropped_codes(self, real_caps, caplog):
+        mode = NormalizedMode(button_codes=[0x120, 0x131, 0x2C0])
+        (msg,) = self._report(mode, real_caps, caplog)
+        assert "0x131" in msg and "does not report" in msg
+        assert "0x120" not in msg
+
+    def test_warns_when_the_whole_list_is_ignored(self, real_caps, caplog):
+        mode = WheelMode(buttons=24, button_codes=[0x130, 0x131])
+        (msg,) = self._report(mode, real_caps, caplog)
+        assert "none of the requested codes" in msg
+        assert "0x130,0x131" in msg and "lowest 24 buttons" in msg
+
+    def test_modes_without_the_feature_are_ignored(self, real_caps, caplog):
+        # GamepadMode has no button_codes machinery; the report must not care.
+        assert self._report(GamepadMode(), real_caps, caplog) == []

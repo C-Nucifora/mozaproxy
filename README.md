@@ -157,6 +157,12 @@ Shipped seeds: `fh5`, `ac`, `acc`, `fs22`, `fs25` (Mode A), `normalized`
 # ~/.config/mozaproxy/profiles/mygame.toml   (scaffold one: mozactl new mygame)
 mode = "C"                    # A|B|C|D — triage a broken game: A, then C, then B
 buttons = 24
+# button_codes = [0x120, 0x2c0, 0x2c1]   # expose EXACTLY these real button codes
+                              # (wins over `buttons`, which then applies only if
+                              # none of them exist on the base): keeps the count
+                              # small while still including buttons high in the
+                              # code space. Codes the base doesn't report are
+                              # skipped and logged (`mozactl logs`).
 identity = "real"             # clone the real base's USB identity (wheel whitelists)
                               # …or an explicit [identity] table with name/vendor/product
 ffb_gain = 80                 # clamp relayed FFB gain to 80%
@@ -221,7 +227,8 @@ Useful flags:
 
 | flag | default | meaning |
 |------|---------|---------|
-| `--buttons N` | 24 | number of buttons to expose |
+| `--buttons N` | 24 | number of buttons to expose (lowest N real codes) |
+| `--button-codes A,B,…` | — | expose exactly these real codes (hex ok); wins over `--buttons`, which applies only if none of them exist |
 | `--name STR` | `MOZA R25 (mozaproxy)` | virtual device name |
 | `--vendor` / `--product` | `0x346e` / `0x0002` | virtual USB ids |
 | `--once` | off | don't supervise/re-attach; exit when device leaves |

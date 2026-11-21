@@ -191,6 +191,7 @@ class Proxy:
             ff_effects_count=self.real.ff_effects_count or 16,
         )
         spec = self.mode.build_spec(real)
+        self._report_button_codes(spec)
         if getattr(self.args, "identity_real", False):
             # Wear the real base's exact identity. Games with wheel whitelists
             # (FH5) match on USB name/ids; presenting the true identity with a
@@ -225,6 +226,28 @@ class Proxy:
             len(spec.events.get(ecodes.EV_KEY, [])),
             "yes" if spec.events.get(ecodes.EV_FF) else "no", spec.max_effects,
         )
+
+    def _report_button_codes(self, spec) -> None:
+        """Log what an explicit --button-codes list actually resolved to.
+
+        The mode drops listed codes the real device does not report, and
+        ignores the list entirely if none of them exist. Both are easy to cause
+        (a typo, a profile written for another wheel) and neither is visible in
+        game, so say so in the log (`mozactl logs`).
+        """
+        unknown = getattr(self.mode, "unknown_button_codes", None)
+        if not unknown:
+            return
+        listed = ",".join(f"0x{c:x}" for c in unknown)
+        if getattr(self.mode, "button_codes_ignored", False):
+            log.warning(
+                "button-codes: none of the requested codes (%s) exist on this "
+                "device; ignoring the list and exposing its lowest %d buttons",
+                listed, len(spec.events.get(ecodes.EV_KEY, [])))
+        else:
+            log.warning(
+                "button-codes: the real device does not report %s; "
+                "exposing the other requested codes", listed)
 
     def close(self) -> None:
         if self.virt is not None:
@@ -490,6 +513,38 @@ def _axis_range(s: str):
     return (lo, hi)
 
 
+def _button_codes(s: str):
+    """argparse converter: comma list of button codes -> sorted list of ints.
+
+    Each entry is an integer literal (decimal or 0x-hex), e.g.
+    "0x120,0x121,0x2c0". Codes must fall in the evdev button space
+    (0x100..0x2ff = BTN_MISC..KEY_MAX); anything else is rejected so a typo
+    can't silently advertise a phantom or non-button code. The result is
+    deduplicated and sorted so equivalent invocations render identically (the
+    daemon's virtual button set is order-independent — games rebind anyway).
+    """
+    codes: set[int] = set()
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            c = int(part, 0)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"{part!r} is not an integer button code (e.g. 0x120)")
+        if not 0x100 <= c <= 0x2FF:
+            raise argparse.ArgumentTypeError(
+                f"button code {part!r} out of range 0x100..0x2ff (BTN_MISC..KEY_MAX)")
+        codes.add(c)
+    if not codes:
+        # An empty list would otherwise mean "expose zero buttons"; the profile
+        # schema rejects an empty button_codes list for the same reason.
+        raise argparse.ArgumentTypeError(
+            "expected at least one button code (e.g. 0x120,0x2c0)")
+    return sorted(codes)
+
+
 def _ff_drop(s: str):
     """argparse converter: comma list of FF effect-type names -> frozenset of codes."""
     codes = set()
@@ -546,6 +601,12 @@ def parse_args(argv=None):
     # The following override mode defaults; unset (None) means 'use mode default'.
     p.add_argument("--buttons", type=int, default=None,
                    help=f"buttons to expose for wheel modes (mode default {DEFAULT_BUTTONS})")
+    p.add_argument("--button-codes", type=_button_codes, default=None,
+                   dest="button_codes",
+                   help="wheel modes: expose exactly these real button codes "
+                        "(comma list, e.g. 0x120,0x121,0x2c0). Overrides "
+                        "--buttons; lets paddles high in the code space stay "
+                        "exposed while the total button count stays small")
     p.add_argument("--identity-real", action="store_true",
                    help="clone the real base's name/vendor/product onto the "
                         "virtual device (games with wheel whitelists, e.g. FH5, "
@@ -580,6 +641,7 @@ def main(argv=None) -> int:
             vendor=args.vendor, product=args.product,
             steer_deadzone=args.deadzone,
             axis_range=args.axis_range,
+            button_codes=args.button_codes,
             steer_src=args.steer_src, throttle_src=args.throttle_src,
             brake_src=args.brake_src, clutch_src=args.clutch_src,
             steer_invert=args.steer_invert, throttle_invert=args.throttle_invert,

@@ -31,7 +31,8 @@ MODES: list[tuple[tuple[str, ...], type[Mode], str]] = [
 ]
 
 
-def _wheel_overrides(buttons, name, vendor, product) -> dict:
+def _wheel_overrides(buttons, name, vendor, product,
+                     button_codes=None) -> dict:
     """Only pass overrides the user actually set; None means 'mode default'."""
     o: dict = {}
     if buttons is not None:
@@ -42,6 +43,8 @@ def _wheel_overrides(buttons, name, vendor, product) -> dict:
         o["vendor"] = vendor
     if product is not None:
         o["product"] = product
+    if button_codes is not None:
+        o["button_codes"] = button_codes
     return o
 
 
@@ -49,6 +52,7 @@ def get_mode(key: str, *, buttons: int | None = None, name: str | None = None,
              vendor: int | None = None, product: int | None = None,
              steer_deadzone: float = 0.0,
              axis_range: tuple[int, int] | None = None,
+             button_codes: list[int] | None = None,
              steer_src: int | None = None, throttle_src: int | None = None,
              brake_src: int | None = None, clutch_src: int | None = None,
              steer_invert: bool = False, throttle_invert: bool = False,
@@ -63,9 +67,10 @@ def get_mode(key: str, *, buttons: int | None = None, name: str | None = None,
     """
     k = str(key).strip().lower()
     if k in ("a", "wheel"):
-        return WheelMode(**_wheel_overrides(buttons, name, vendor, product))
+        return WheelMode(**_wheel_overrides(buttons, name, vendor, product,
+                                            button_codes))
     if k in ("c", "normalized", "norm"):
-        co: dict = _wheel_overrides(buttons, name, vendor, product)
+        co: dict = _wheel_overrides(buttons, name, vendor, product, button_codes)
         if axis_range is not None:
             # Uniform target range for all non-hat axes; (0, 32767) dodges
             # sign-handling bugs in picky HID stacks (see NormalizedMode).

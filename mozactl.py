@@ -721,7 +721,24 @@ def cmd_start(args) -> int:
     argv_tail = ["--mode", mode]
     if args.deadzone:
         argv_tail += ["--deadzone", str(args.deadzone)]
-    argv_tail += args.daemon_args
+    # argparse.REMAINDER keeps the "--" that introduces the daemon's own flags.
+    # Forwarded as-is it tells the daemon's parser "positionals only from
+    # here", which rejects every flag after it — so drop it (as `run` does for
+    # the game command).
+    extra = list(args.daemon_args)
+    if extra[:1] == ["--"]:
+        del extra[0]
+    argv_tail += extra
+    # A --mode among them wins (the daemon takes the last one), so record and
+    # report the mode the daemon will really run.
+    try:
+        import contextlib
+        import io
+        from mozaproxy import parse_args
+        with contextlib.redirect_stderr(io.StringIO()):
+            mode = _canonical_mode(parse_args(argv_tail).mode)
+    except (SystemExit, Exception):  # rejected argv: the spawn reports it
+        pass
     print(f"Starting mode {mode} ...")
     pid = _spawn_daemon(argv_tail)
     if pid is None:
@@ -1301,8 +1318,9 @@ def main(argv=None) -> int:
                         "B/gamepad (XInput). See 'mozactl modes'.")
     s.add_argument("--deadzone", type=float, default=0.0,
                    help="steering deadzone 0..1 (mode C)")
-    s.add_argument("daemon_args", nargs=argparse.REMAINDER,
-                   help="extra args passed through to mozaproxy.py")
+    s.add_argument("daemon_args", nargs=argparse.REMAINDER, metavar="-- DAEMON_ARGS",
+                   help="extra args for mozaproxy.py, after a '--' "
+                        "(e.g. -- --button-codes 0x120,0x2c0)")
     s.set_defaults(fn=cmd_start)
     sub.add_parser("stop", help="stop the daemon").set_defaults(fn=cmd_stop)
     sub.add_parser("modes", help="list presentation modes").set_defaults(fn=cmd_modes)

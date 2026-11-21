@@ -80,6 +80,64 @@ class TestMozactlParser:
         assert exc.value.code == 2
 
 
+class TestStartForwardsDaemonArgs:
+    """`mozactl start -- <daemon flags>`: the advertised pass-through."""
+
+    @pytest.fixture
+    def spawned(self, monkeypatch):
+        seen = {}
+        monkeypatch.setattr(mozactl, "daemon_pids", lambda: [])
+        monkeypatch.setattr(mozactl, "_spawn_daemon",
+                            lambda argv: seen.setdefault("argv", list(argv)) and 4242)
+        monkeypatch.setattr(mozactl, "_write_state",
+                            lambda pid, mode, argv, profile=None:
+                            seen.update(state=(pid, mode, list(argv), profile)))
+        return seen
+
+    def test_separator_is_not_forwarded(self, spawned, capsys):
+        # The "--" used to reach the daemon, whose parser then refused every
+        # flag after it and exited: no form of the pass-through ever worked.
+        rc = mozactl.main(["start", "--mode", "C", "--",
+                           "--button-codes", "0x120,0x2c0"])
+        assert rc == 0
+        assert spawned["argv"] == ["--mode", "C", "--button-codes", "0x120,0x2c0"]
+        assert mozaproxy.parse_args(spawned["argv"]).button_codes == [0x120, 0x2C0]
+
+    def test_state_matches_what_a_profile_renders(self, spawned, capsys):
+        # So a later `mozactl run` of an equivalent profile leaves this daemon
+        # alone instead of restarting it.
+        from profiledb import Profile, daemon_args, needs_restart
+        mozactl.main(["start", "--mode", "normalized", "--",
+                      "--button-codes", "0x120,0x2c0"])
+        pid, mode, argv, profile = spawned["state"]
+        want = daemon_args(Profile(name="g", mode="C",
+                                   button_codes=[0x120, 0x2C0]), {})
+        assert (mode, argv, profile) == ("C", want, None)
+        assert needs_restart({"pid": pid, "argv": argv}, want, [pid]) is False
+
+    def test_plain_start_is_unchanged(self, spawned, capsys):
+        assert mozactl.main(["start", "--mode", "C", "--deadzone", "0.05"]) == 0
+        assert spawned["argv"] == ["--mode", "C", "--deadzone", "0.05"]
+
+    def test_only_the_leading_separator_is_dropped(self, spawned, capsys):
+        mozactl.main(["start", "--", "--name", "--"])
+        assert spawned["argv"] == ["--mode", "A", "--name", "--"]
+
+    def test_a_forwarded_mode_is_the_mode_recorded(self, spawned, capsys):
+        # The daemon takes the LAST --mode, so `status` (which shows the
+        # recorded mode) must report that one, not start's own default.
+        mozactl.main(["start", "--", "--mode", "normalized"])
+        assert spawned["argv"] == ["--mode", "A", "--mode", "normalized"]
+        assert spawned["state"][1] == "C"
+        assert "Starting mode C" in capsys.readouterr().out
+
+    def test_argv_the_daemon_rejects_keeps_starts_mode(self, spawned, capsys):
+        # Nothing to read the mode from; the spawn itself reports the error.
+        mozactl.main(["start", "--mode", "C", "--", "--no-such-flag"])
+        assert spawned["state"][1] == "C"
+        assert capsys.readouterr().err == ""
+
+
 class TestDaemonParser:
     def test_help_renders(self, capsys):
         out = _help_exits_cleanly(mozaproxy.parse_args, ["--help"], capsys)

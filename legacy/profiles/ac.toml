@@ -1,0 +1,19 @@
+# Assetto Corsa.
+#
+# AC runs in WHEEL input mode and binds to the base by USB identity
+# (controls.ini PGUID = 346e:0000, the real base). The udev hide-rule strips
+# ID_INPUT_JOYSTICK from the real node, so once mozaproxy is installed AC no
+# longer sees its bound wheel and crashes on launch (WHEEL mode, no window).
+# Route it through the proxy AND clone the real identity so the virtual wheel
+# comes up as 346e:0000 "Gudsen MOZA R25 Ultra Base" — matching AC's saved
+# binding, so it just works with no rebind. Unlike FH5, AC is fine with the
+# base's own 346e:0000 id (it worked flawlessly natively on it).
+#
+# That binding was made against all 128 of the base's buttons, so expose all
+# of them: mode A's default of 24 keeps only the lowest 24 codes, and a bound
+# paddle or rim button above those would stop working.
+name = "ac"
+mode = "A"
+identity = "real"
+buttons = 128
+notes = "Hidden real node makes AC's WHEEL-mode launch crash; run through the proxy with the real identity cloned so the existing binding matches."

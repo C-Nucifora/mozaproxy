@@ -1,0 +1,41 @@
+# JDM: Japanese Drift Master (Unreal Engine).
+#
+# DOES NOT WORK through the virtual wheel on current Proton (checked
+# 2026-11-21). Proton hands any uinput wheel to its SDL backend, which presents
+# every axis as a signed 32-bit HID field. JDM sign-extends only 16-bit fields,
+# so every negative value reads as pegged ("works one way, pegged the other").
+# No wheel mode (A/C), axis_range, identity or button setting changes those
+# fields; mode B only sidesteps them by turning the wheel into an XInput pad.
+# docs/PROTON-AXES.md has the verified mechanism and the ranked routes; the only
+# one that has worked in game uses the base's own hidraw node (the `main`
+# branch's route; JDM build 25209638, without force protection).
+#
+# Wine 11.1 sizes these fields to 16 bits. Once a Proton carries that change,
+# re-test this profile (mode A should then work too), and redo JDM's custom
+# binding from scratch.
+#
+# What the settings below do and don't do:
+# - identity 346e:0fff: a MOZA id that matches no JDM per-device preset and is
+#   not on SDL's wheel list. In July the axes "worked" with it only because the
+#   then-synthetic button block contained BTN_GAMEPAD (0x130), so SDL mapped the
+#   wheel as a gamepad: steering, throttle and brake, but no clutch and few
+#   buttons. The real button codes below skip 0x130, so SDL now treats it as a
+#   joystick.
+# - mode C + axis_range [0, 32767]: no effect on what JDM receives under Proton,
+#   because SDL rescales every range onto -32768..32767. Harmless; kept as tried.
+# - buttons = 128: exposes every real button code, so the paddles, clutch and
+#   rim buttons in the upper 0x270.. block are present.
+name = "jdm"
+mode = "C"
+buttons = 128
+axis_range = [0, 32767]
+notes = "Doesn't work on current Proton: 32-bit axis fields read as pegged (docs/PROTON-AXES.md). Re-test once Proton carries Wine 11.1's axis-size change."
+
+[identity]
+name = "MOZA Wheelbase (mozaproxy)"
+vendor = 0x346e
+product = 0x0fff
+
+[proton]
+env = { PROTON_ENABLE_WAYLAND = "1" }
+steam_input = "off"
